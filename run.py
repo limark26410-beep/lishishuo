@@ -1,0 +1,395 @@
+#!/usr/bin/env python3
+"""
+文史长音频自动化流水线 · 主编排脚本
+输入：script.txt + prompts.json
+输出：final.mp4（带字幕、背景乐）
+
+流程：
+  1. 配音（edge-tts） ────┐  并行
+  2. 生图（通义万相） ────┘
+  3. 字幕解析 + 时间分配
+  4. Ken Burns 动效（逐段生成）
+  5. 视频拼接（concat 硬切 / xfade 转场）
+  6. 混音（配音 + 背景乐）
+  7. 烧字幕
+  8. 清理临时文件
+
+编码策略（config.yaml 控制）：
+  encoder: libx264 | auto | h264_videotoolbox
+  transition: concat（生产默认，秒出）| xfade（重编码，可选）
+  preset: veryfast（生产默认）
+"""
+
+import os
+import sys
+import json
+import time
+import subprocess
+import threading
+from pathlib import Path
+from datetime import timedelta
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "lib"))
+
+import yaml
+from tts_utils import generate_tts, vtt_to_srt
+from ffmpeg_utils import (
+    build_ken_burns_clip,
+    concat_clips,
+    xfade_concat,
+    mix_audio,
+    burn_subtitles,
+    get_media_duration,
+)
+
+
+# ─────────── 工具 ───────────
+
+def load_config(config_path: str) -> dict:
+    with open(config_path, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+
+def _time_str(sec: float) -> str:
+    td = timedelta(seconds=int(sec))
+    return str(td)
+
+
+# ─────────── 步骤函数 ───────────
+
+def step_tts(episode_dir: str, cfg: dict) -> dict:
+    """Step 1: 配音生成"""
+    print(f"\n{'='*60}")
+    print("STEP 1: 配音 (TTS)")
+    print(f"{'='*60}")
+
+    script_path = os.path.join(episode_dir, "script.txt")
+    audio_path = os.path.join(episode_dir, "audio.mp3")
+    subs_vtt = os.path.join(episode_dir, "subs.vtt")
+    subs_srt = os.path.join(episode_dir, "subs.srt")
+    tts_cfg = cfg.get("tts", {})
+
+    result = generate_tts(
+        script_path=script_path,
+        output_audio=audio_path,
+        output_subs=subs_vtt,
+        voice=tts_cfg.get("voice", "zh-CN-YunjianNeural"),
+        rate=tts_cfg.get("rate", "-4%"),
+    )
+    vtt_to_srt(subs_vtt, subs_srt)
+    result["subs_srt"] = subs_srt
+    return result
+
+
+def step_image_gen(episode_dir: str, cfg: dict) -> dict:
+    """Step 2: 生图（通义万相）"""
+    print(f"\n{'='*60}")
+    print("STEP 2: 生图 (Tongyi Wanxiang)")
+    print(f"{'='*60}")
+
+    prompts_path = os.path.join(episode_dir, "prompts.json")
+    images_dir = os.path.join(episode_dir, "images")
+    os.makedirs(images_dir, exist_ok=True)
+
+    with open(prompts_path, "r", encoding="utf-8") as f:
+        sections = json.load(f)
+
+    all_prompts = []
+    for sec in sections:
+        for p in sec.get("prompts", []):
+            all_prompts.append({
+                "section_id": sec["id"],
+                "section_title": sec["title"],
+                "prompt": p,
+            })
+
+    # 成本护栏
+    img_cfg = cfg.get("image_gen", {})
+    cost_guard = img_cfg.get("cost_guard", {})
+    max_images = cost_guard.get("max_images_per_episode", 50)
+    if len(all_prompts) > max_images:
+        print(f"  ⚠ 提示词数量 ({len(all_prompts)}) 超过上限 ({max_images})，截断")
+        all_prompts = all_prompts[:max_images]
+
+    from tongyi_api import TongyiImageGen
+    api_key = os.environ.get("DASHSCOPE_API_KEY", "")
+    client = TongyiImageGen(api_key=api_key)
+
+    result = client.batch_generate(
+        prompts=[p["prompt"] for p in all_prompts],
+        output_dir=images_dir,
+        batch_size=img_cfg.get("tongyi", {}).get("batch_size", 5),
+    )
+    result["prompts_meta"] = all_prompts
+    return result
+
+
+def step_mix(episode_dir: str, tts_result: dict, img_result: dict, cfg: dict) -> str:
+    """Step 3-7: 混剪合成"""
+    print(f"\n{'='*60}")
+    print("STEP 3: 混剪合成")
+    print(f"{'='*60}")
+
+    audio_path = tts_result["audio_path"]
+    subs_srt = tts_result["subs_srt"]
+    audio_dur = tts_result["duration_sec"]
+    images_dir = os.path.join(episode_dir, "images")
+    clips_dir = os.path.join(episode_dir, "clips")
+    os.makedirs(clips_dir, exist_ok=True)
+
+    video_cfg = cfg.get("video", {})
+    ken_cfg = video_cfg.get("ken_burns", {})
+    trans = video_cfg.get("transition", "concat")
+    xfade_cfg = video_cfg.get("xfade", {})
+    bgm_cfg = cfg.get("bgm", {})
+    enc_cfg = cfg.get("video", {}).get("encoding", {})
+
+    width = video_cfg.get("width", 1080)
+    height = video_cfg.get("height", 1920)
+    fps = video_cfg.get("fps", 25)
+
+    # ── 3a. 解析图片结果 ──
+    image_map = img_result.get("image_map", {})
+    prompts_meta = img_result.get("prompts_meta", [])
+    image_paths = []
+    for idx in sorted(image_map.keys()):
+        path = image_map[idx]
+        if path and os.path.exists(path):
+            image_paths.append(path)
+
+    if not image_paths:
+        raise RuntimeError("没有可用的生图结果，无法继续")
+
+    num_images = len(image_paths)
+    print(f"\n  可用图片: {num_images}")
+    print(f"  音频时长: {_time_str(audio_dur)}")
+
+    # ── 3b. 时间分配 ──
+    if trans == "xfade":
+        xfade_dur = xfade_cfg.get("duration", 1.0)
+        total_overlap = (num_images - 1) * xfade_dur
+    else:
+        total_overlap = 0
+    available_time = audio_dur - total_overlap
+    base_duration = available_time / num_images
+    clip_durations = [base_duration] * num_images
+
+    print(f"\n  时间分配 ({num_images} 张图):")
+    for i, d in enumerate(clip_durations):
+        print(f"    [{i+1:02d}] {_time_str(d)} | {Path(image_paths[i]).name}")
+
+    # ── 3c. Ken Burns 逐段生成 ──
+    print(f"\n  生成 Ken Burns clips...")
+    clip_paths = []
+    for i, (img_path, dur) in enumerate(zip(image_paths, clip_durations)):
+        clip_out = os.path.join(clips_dir, f"clip_{i+1:03d}.mp4")
+        print(f"  [{i+1}/{num_images}] {Path(img_path).name} -> {_time_str(dur)}")
+        build_ken_burns_clip(
+            image_path=img_path,
+            output_path=clip_out,
+            duration=dur,
+            cfg=cfg,
+            width=width, height=height, fps=fps,
+            zoom_end=ken_cfg.get("zoom_end", 1.08),
+            pan_speed=ken_cfg.get("pan_speed", 0.0004),
+            preview_scale=ken_cfg.get("preview_scale", 2),
+        )
+        clip_paths.append(clip_out)
+
+    # ── 3d. 拼接 ──
+    merged_video = os.path.join(episode_dir, "_merged_video.mp4")
+    if trans == "xfade":
+        print(f"\n  拼接 clips (xfade 交叉溶解)...")
+        xfade_concat(
+            clip_paths=clip_paths,
+            output_path=merged_video,
+            cfg=cfg,
+            transition=xfade_cfg.get("transition", "fade"),
+            duration=xfade_cfg.get("duration", 1.0),
+            fps=fps,
+        )
+    else:
+        print(f"\n  拼接 clips (concat 硬切)...")
+        concat_clips(clip_paths=clip_paths, output_path=merged_video)
+
+    # ── 3e. 混音 ──
+    print(f"\n  混音...")
+    audio_mixed = os.path.join(episode_dir, "_audio_mixed.mp4")
+    bgm_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        bgm_cfg.get("path", "assets/bgm.mp3"),
+    )
+    mix_audio(
+        video_path=merged_video,
+        audio_path=audio_path,
+        bgm_path=bgm_path,
+        output_path=audio_mixed,
+        bgm_volume=bgm_cfg.get("volume", 0.12),
+        audio_bitrate=enc_cfg.get("audio_bitrate", "192k"),
+    )
+
+    # ── 3f. 烧字幕 ──
+    print(f"\n  烧录字幕...")
+    final_output = os.path.join(episode_dir, "final.mp4")
+    burn_subtitles(
+        video_path=audio_mixed,
+        subtitle_path=subs_srt,
+        output_path=final_output,
+        cfg=cfg,
+    )
+
+    final_dur = get_media_duration(final_output)
+    print(f"\n  ✓ final.mp4: {_time_str(final_dur)} | "
+          f"{os.path.getsize(final_output)/1024/1024:.1f}MB")
+    return final_output
+
+
+def cleanup(episode_dir: str, cfg: dict):
+    cleanup_cfg = cfg.get("cleanup", {})
+    import shutil
+
+    if cleanup_cfg.get("clean_images", True):
+        d = os.path.join(episode_dir, "images")
+        if os.path.exists(d):
+            shutil.rmtree(d)
+            print(f"  🗑 清理: images/")
+
+    if cleanup_cfg.get("clean_clips", True):
+        d = os.path.join(episode_dir, "clips")
+        if os.path.exists(d):
+            shutil.rmtree(d)
+            print(f"  🗑 清理: clips/")
+
+    for fname in ["_merged_video.mp4", "_audio_mixed.mp4"]:
+        fpath = os.path.join(episode_dir, fname)
+        if os.path.exists(fpath):
+            os.remove(fpath)
+            print(f"  🗑 清理: {fname}")
+
+
+# ─────────── 主入口 ───────────
+
+def main():
+    import argparse
+    from concurrent.futures import ThreadPoolExecutor
+
+    parser = argparse.ArgumentParser(description="文史长音频自动化流水线")
+    parser.add_argument("--episode", "-e", default="001", help="期号 (默认: 001)")
+    parser.add_argument(
+        "--config", "-c",
+        default=os.path.join(os.path.dirname(__file__), "config.yaml"),
+        help="配置文件路径",
+    )
+    parser.add_argument("--skip-tts", action="store_true", help="跳过 TTS")
+    parser.add_argument("--skip-images", action="store_true", help="跳过生图")
+    parser.add_argument("--no-cleanup", action="store_true", help="不清理临时文件")
+    parser.add_argument("--dry-run", action="store_true", help="仅检查素材")
+    args = parser.parse_args()
+
+    config_path = args.config
+    if not os.path.exists(config_path):
+        print(f"❌ 配置文件不存在: {config_path}")
+        sys.exit(1)
+
+    cfg = load_config(config_path)
+    episode_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "episodes", args.episode)
+
+    if not os.path.exists(os.path.join(episode_dir, "script.txt")):
+        print(f"❌ {episode_dir}/script.txt 不存在")
+        sys.exit(1)
+
+    print(f"\n{'#'*60}")
+    print(f"# 文史长音频自动化流水线")
+    print(f"# 期号: {args.episode}")
+    print(f"# 目录: {episode_dir}")
+    print(f"{'#'*60}")
+
+    if args.dry_run:
+        ok = os.path.exists(os.path.join(episode_dir, "prompts.json"))
+        print(f"\n✔ script.txt: OK")
+        print(f"{'✔' if ok else '❌'} prompts.json: {'OK' if ok else '不存在'}")
+        print(f"   转场: {cfg.get('video', {}).get('transition', 'concat')}")
+        print(f"   编码: {cfg.get('video', {}).get('encoder', 'libx264')}")
+        return
+
+    # 并行跑 TTS + 生图
+    tts_result, img_result = [None], [None]
+    errors = []
+
+    def run_tts():
+        if args.skip_tts:
+            ap = os.path.join(episode_dir, "audio.mp3")
+            ss = os.path.join(episode_dir, "subs.srt")
+            sv = os.path.join(episode_dir, "subs.vtt")
+            if os.path.exists(ap):
+                dur = get_media_duration(ap)
+                if (not os.path.exists(ss) or os.path.getsize(ss) == 0) and os.path.exists(sv):
+                    print("  VTT→SRT 转换...")
+                    vtt_to_srt(sv, ss)
+                print(f"  ⏩ 使用已有音频: {dur:.1f}s")
+                return {
+                    "audio_path": ap, "subs_path": sv,
+                    "subs_srt": ss if os.path.exists(ss) else None,
+                    "duration_sec": dur,
+                }
+            raise RuntimeError("--skip-tts 但未找到 audio.mp3")
+        return step_tts(episode_dir, cfg)
+
+    def run_images():
+        if args.skip_images:
+            d = os.path.join(episode_dir, "images")
+            if os.path.exists(d):
+                existing = sorted([
+                    os.path.join(d, f) for f in os.listdir(d)
+                    if f.lower().endswith((".jpg", ".png", ".jpeg"))
+                ])
+                if existing:
+                    print(f"  ⏩ 使用已有图片: {len(existing)} 张")
+                    return {"image_map": {i: p for i, p in enumerate(existing)},
+                            "prompts_meta": []}
+                raise RuntimeError("--skip-images 但 images/ 为空")
+            raise RuntimeError("--skip-images 但 images/ 不存在")
+        return step_image_gen(episode_dir, cfg)
+
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        ft = ex.submit(run_tts)
+        fi = ex.submit(run_images)
+
+        for name, future in [("tts", ft), ("images", fi)]:
+            try:
+                r = future.result()
+                if name == "tts":
+                    tts_result[0] = r
+                else:
+                    img_result[0] = r
+            except Exception as e:
+                errors.append(f"{name}: {e}")
+                print(f"❌ {name} failed: {e}")
+
+    if errors:
+        print(f"\n❌ 并行步骤失败: {errors}")
+        sys.exit(1)
+
+    tts_result, img_result = tts_result[0], img_result[0]
+
+    # 混剪
+    if tts_result and img_result:
+        final_path = step_mix(episode_dir, tts_result, img_result, cfg)
+    else:
+        print("❌ TTS 或生图结果缺失")
+        sys.exit(1)
+
+    # 清理
+    if not args.no_cleanup:
+        print(f"\n清理临时文件...")
+        cleanup(episode_dir, cfg)
+
+    print(f"\n{'='*60}")
+    print(f"🎉 流水线完成！")
+    print(f"   成片: {final_path}")
+    print(f"{'='*60}")
+
+
+if __name__ == "__main__":
+    main()

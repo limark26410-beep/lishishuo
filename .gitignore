@@ -1,0 +1,16 @@
+node_modules/
+__pycache__/
+*.pyc
+.DS_Store
+episodes/*/images/
+episodes/*/clips/
+episodes/*/audio.mp3
+episodes/*/audio_default.mp3
+episodes/*/subs.vtt
+episodes/*/subs_default.vtt
+episodes/*/subs.srt
+episodes/*/final*.mp4
+episodes/*/_merged_video.mp4
+episodes/*/_merged_video_v2.mp4
+episodes/*/_audio_mixed*.mp4
+logs/

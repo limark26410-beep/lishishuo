@@ -1,0 +1,90 @@
+# 文史长音频自动化流水线 · 配置
+
+pipeline:
+  name: "历史长音频流水线"
+  version: "0.1.0"
+
+# === 配音 ===
+tts:
+  engine: "edge-tts"
+  voice: "zh-CN-YunjianNeural"   # 云健男声
+  rate: "-4%"                     # 稍放慢，更沉稳
+  subtitle_format: "vtt"          # edge-tts 原生输出 VTT
+
+# === 生图 ===
+image_gen:
+  provider: "tongyi"              # 先用通义万相免费额度试水
+  tongyi:
+    api_base: "https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis"
+    model: "wanx2.1-t2i-turbo"    # 通义万相快速版
+    size: "1080x1920"             # 9:16 竖屏
+    batch_size: 5                 # 并发提交数
+    max_retries: 3
+    poll_interval: 5              # 轮询间隔（秒）
+    timeout: 120                  # 单张超时（秒）
+  
+  # 风格锚定词 - 固定追加到每条 prompt 末尾
+  style_anchor: "中国古风，水墨质感，纪录片氛围，无文字，场景宏大，写意风格"
+  
+  # 成本护栏
+  cost_guard:
+    max_images_per_episode: 50    # 单期图数上限
+    log_file: "logs/image_costs.csv"
+
+# === 混剪 ===
+video:
+  aspect: "9:16"                  # 竖屏
+  width: 1080
+  height: 1920
+  fps: 25
+
+  # 编码器配置
+  # 本地开发 (macOS) → h264_videotoolbox (GPU 硬件编码)
+  # 生产环境 (Linux, 无 GPU) → libx264 (CPU 软编码)
+  encoder: "libx264"              # 默认值，会自动探测平台
+  encoder_platform:
+    darwin: "h264_videotoolbox"   # macOS 走 video toolbox
+    linux: "libx264"              # Linux 走软件
+  encoder_options:
+    libx264:
+      preset: "veryfast"          # 生产默认，快于 medium 但画质可接受
+      crf: 22                     # 比 20 略高，体积更小
+    h264_videotoolbox:
+      bitrate: "3000k"            # 硬件编码用固定码率（videotoolbox 不支持 crf）
+
+  pixel_format: "yuv420p"
+  audio_codec: "aac"
+  audio_bitrate: "192k"
+
+  # 转场策略
+  # concat: 硬切，秒出不转码（推荐生产默认）
+  # xfade:  交叉溶解，需要重编码（可选，用于 section 切换处）
+  transition: "concat"           # concat | xfade
+  xfade:
+    transition: "fade"            # 交叉溶解类型
+    duration: 1.0                 # 溶解时长（秒）
+
+  ken_burns:
+    zoom_start: 1.0               # 起始缩放比
+    zoom_end: 1.08                # 终止缩放比（防糊边）
+    pan_speed: 0.0004             # zoompan z 增量
+    preview_scale: 2              # 上游放大倍数，防推近糊边
+
+  subtitle:
+    font: "AdobeHeitiStd-Regular" # macOS 自带
+    font_linux: "Noto Sans CJK SC" # Linux 需安装
+    font_size: 18
+    font_color: "&H00FFFFFF"
+    outline_color: "&H90000000"
+    border_style: 3               # 半透明底衬
+    margin_v: 40
+
+# === 背景音乐 ===
+bgm:
+  path: "assets/bgm.mp3"          # 背景乐文件路径
+  volume: 0.12                    # 压低音量倍数
+
+# === 临时文件 ===
+cleanup:
+  clean_images: true              # 生成完毕后清理 images/
+  clean_clips: true               # 生成完毕后清理 clips/
