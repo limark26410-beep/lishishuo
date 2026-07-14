@@ -17,7 +17,7 @@ image_gen:
   tongyi:
     api_base: "https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis"
     model: "wanx2.1-t2i-turbo"    # 通义万相快速版
-    size: "1080x1920"             # 9:16 竖屏
+    size: "1080*1440"             # 9:16 竖屏
     batch_size: 5                 # 并发提交数
     max_retries: 3
     poll_interval: 5              # 轮询间隔（秒）

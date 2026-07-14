@@ -309,13 +309,12 @@ def burn_subtitles(
 
     if not has_subtitle_filter:
         print("  ⚠ subtitles 滤镜不可用（ffmpeg 缺 --enable-libass）")
-        print(f"  → 跳过烧字幕，SRT 文件保留在: {subtitle_path}")
-        # Copy video as-is
-        subprocess.run(
-            ["ffmpeg", "-y", "-i", video_path, "-c", "copy", output_path],
-            check=True, capture_output=True, text=True
+        print("  → 使用 PIL overlay 方案替代")
+        from subtitle_burn import burn_subtitles_overlay
+        return burn_subtitles_overlay(
+            video_path, subtitle_path, output_path,
+            encode_args=_build_encoder_args(cfg or {}),
         )
-        return output_path
 
     style = (
         f"FontName={font},"
