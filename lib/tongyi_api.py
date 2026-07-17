@@ -12,10 +12,10 @@ import concurrent.futures
 
 API_BASE = "https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis"
 MODEL = "wanx2.1-t2i-turbo"
-BATCH_SIZE = 3              # 低并发，避免超时
-MAX_RETRIES = 2
-POLL_INTERVAL = 5
-TIMEOUT = 120
+BATCH_SIZE = 3
+MAX_RETRIES = 3
+POLL_INTERVAL = 10
+TIMEOUT = 600  # 免费额度降速严重，单张最长等 10 分钟
 STYLE_ANCHOR = "中国古风，水墨质感，纪录片氛围，无文字，场景宏大，写意风格"
 
 
@@ -62,11 +62,16 @@ class TongyiImageGen:
                 task_id = result.get("output", {}).get("task_id")
                 if task_id:
                     return task_id
-                print(f"  ⚠ No task_id: {result.get('message', '')}")
-            except Exception as e:
-                print(f"  ⚠ Submit error (attempt {attempt+1}): {e}")
-                if attempt < MAX_RETRIES - 1:
+                msg = result.get('message', '') or result.get('code', '')
+                print(f"  \u26a0 提交失败 (try {attempt+1}/{MAX_RETRIES}): {msg[:60]}")
+                if 'rate limit' in msg.lower():
+                    time.sleep(5)
+                elif attempt < MAX_RETRIES - 1:
                     time.sleep(2)
+            except Exception as e:
+                print(f"  \u26a0 提交异常 (try {attempt+1}/{MAX_RETRIES}): {e}")
+                if attempt < MAX_RETRIES - 1:
+                    time.sleep(3)
         return None
 
     def _poll_and_download(self, task_id: str, output_path: str) -> bool:
@@ -88,18 +93,19 @@ class TongyiImageGen:
                         ], capture_output=True, text=True, timeout=90)
                         if os.path.exists(output_path) and os.path.getsize(output_path) > 1000:
                             sz = os.path.getsize(output_path)
-                            print(f"  ✓ {Path(output_path).name} ({sz/1024:.0f}KB)")
+                            print(f"  \u2713 {Path(output_path).name} ({sz/1024:.0f}KB)")
                             return True
                     return False
                 elif status == "FAILED":
                     msg = result.get("output", {}).get("message", "")
-                    print(f"  ✗ Task failed: {msg}")
+                    print(f"  \u2717 任务失败: {msg[:60]}")
                     return False
                 time.sleep(POLL_INTERVAL)
             except Exception as e:
-                print(f"  ⚠ Poll error: {e}")
+                print(f"  \u26a0 轮询异常: {e}")
                 time.sleep(POLL_INTERVAL)
-        print(f"  ✗ Poll timeout")
+
+        print(f"  \u2717 超时 ({TIMEOUT}s)")
         return False
 
     def batch_generate(self, prompts: list, output_dir: str,
@@ -110,56 +116,60 @@ class TongyiImageGen:
         results = []
 
         print(f"\n{'='*50}")
-        print(f"生图：{len(prompts)} 条提示词，并发 {batch_size}")
+        print(f"\u751f\u56fe\uff1a{len(prompts)} \u6761\u63d0\u793a\u8bcd\uff0c\u5e76\u53d1 {batch_size}")
         print(f"{'='*50}")
 
         # 提交所有任务（逐个，控制并发）
-        tasks = []  # [(idx, prompt, task_id)]
+        tasks = []
         for i, prompt in enumerate(prompts):
-            print(f"  [{i+1}/{len(prompts)}] 提交: {prompt[:40]}...")
+            print(f"  [{i+1}/{len(prompts)}] \u63d0\u4ea4: {prompt[:40]}...")
             task_id = self._submit(prompt)
             if task_id:
                 tasks.append((i, prompt, task_id))
             else:
                 self.failures.append(i)
                 image_map[i] = None
-            # 限速
             if (i + 1) % batch_size == 0 and i < len(prompts) - 1:
-                print(f"  ⏸ 暂停 3s 限速...")
-                time.sleep(3)
+                print(f"  \u23f8 \u6682\u505c 5s \u9650\u901f...")
+                time.sleep(5)
 
         # 轮询 + 下载
-        print(f"\n轮询 {len(tasks)} 个任务...")
+        print(f"\n\u8f6e\u8be2 {len(tasks)} \u4e2a\u4efb\u52a1...")
         for idx, prompt, task_id in tasks:
             ph = hashlib.sha1(prompt.encode()).hexdigest()[:8]
             out = os.path.join(output_dir, f"img_{idx:03d}_{ph}.jpg")
 
-            # 断点续跑
             if os.path.exists(out) and os.path.getsize(out) > 1000:
-                print(f"  [{idx+1}] 已存在，跳过: {Path(out).name}")
+                print(f"  [{idx+1}] \u5df2\u5b58\u5728\uff0c\u8df3\u8fc7: {Path(out).name}")
                 image_map[idx] = out
+                results.append({"index": idx, "prompt": prompt, "path": out, "task_id": task_id})
                 continue
 
-            print(f"  [{idx+1}] 等待...", end="", flush=True)
+            print(f"  [{idx+1}] \u7b49\u5f85...", end="", flush=True)
             ok = self._poll_and_download(task_id, out)
             if ok:
                 image_map[idx] = out
-                results.append({
-                    "index": idx,
-                    "prompt": prompt,
-                    "path": out,
-                    "task_id": task_id,
-                })
+                results.append({"index": idx, "prompt": prompt, "path": out, "task_id": task_id})
             else:
+                # 超时后重新提交
+                print(f"  \u2192 \u91cd\u65b0\u63d0\u4ea4\u4efb\u52a1 [{idx+1}]...", end="", flush=True)
+                new_task_id = self._submit(prompt)
+                if new_task_id:
+                    print(f"  [{idx+1}] \u7b49\u5f85(\u91cd\u8bd5)...", end="", flush=True)
+                    ok = self._poll_and_download(new_task_id, out)
+                    if ok:
+                        image_map[idx] = out
+                        results.append({"index": idx, "prompt": prompt, "path": out, "task_id": new_task_id})
+                        continue
                 self.failures.append(idx)
                 image_map[idx] = None
                 print()
 
         success = sum(1 for v in image_map.values() if v is not None)
         self.total_images += success
-        print(f"\n生图完成：成功 {success}/{len(prompts)}")
+        print(f"\n\u751f\u56fe\u5b8c\u6210\uff1a\u6210\u529f {success}/{len(prompts)}")
         if self.failures:
-            print(f"  失败: {self.failures}")
+            print(f"  \u5931\u8d25: {self.failures}")
 
         return {
             "total": len(prompts),

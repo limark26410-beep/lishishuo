@@ -14,3 +14,7 @@ episodes/*/_merged_video.mp4
 episodes/*/_merged_video_v2.mp4
 episodes/*/_audio_mixed*.mp4
 logs/
+
+# Environment variables (API keys, secrets)
+.env
+.env.local

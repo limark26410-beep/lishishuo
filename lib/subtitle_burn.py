@@ -118,17 +118,17 @@ def burn_subtitles_overlay(
     # 生成带 Alpha 的字幕视频（HEVC 比 ProRes 快 100 倍）
     sv = os.path.join(tmp_dir, "subs.mov")
     print(f"  Encoding subtitle video (HEVC + alpha)...")
+    # ProRes 4444 supports alpha channel
     subprocess.run([
         "ffmpeg", "-y", "-f", "concat", "-safe", "0",
         "-i", cp,
-        "-c:v", "hevc_videotoolbox",
-        "-b:v", "2000k", "-q:v", "60",
-        "-tag:v", "hvc1",
-        "-alpha_quality", "0.75",
+        "-c:v", "prores_ks",
+        "-profile:v", "4444",
+        "-vendor", "apl0",
         "-pix_fmt", "yuva444p10le",
         "-r", "25",
         sv,
-    ], check=True, capture_output=True, text=True, timeout=120)
+    ], check=True, capture_output=True, text=True, timeout=600)
     print(f"  Subtitle video: {os.path.getsize(sv)/1024/1024:.1f}MB")
 
     # 获取视频尺寸
@@ -158,7 +158,7 @@ def burn_subtitles_overlay(
         *enc,
         "-shortest",
         output_path,
-    ], check=True, capture_output=True, text=True, timeout=300)
+    ], check=True, capture_output=True, text=True, timeout=900)
 
     print(f"  ✅ Subtitles burned: {Path(output_path).name}")
 

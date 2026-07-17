@@ -30,7 +30,7 @@ def generate_tts(
         "edge-tts",
         "--file", script_path,
         "--voice", voice,
-        "--rate", rate,
+        f"--rate={rate}",
         "--write-media", output_audio,
         "--write-subtitles", output_subs,
     ]
