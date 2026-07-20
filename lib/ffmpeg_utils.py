@@ -322,7 +322,11 @@ def burn_subtitles(
         f"PrimaryColour={sub_cfg.get('font_color', font_color)},"
         f"OutlineColour={sub_cfg.get('outline_color', outline_color)},"
         f"BorderStyle={sub_cfg.get('border_style', border_style)},"
-        f"MarginV={sub_cfg.get('margin_v', margin_v)}"
+        f"Alignment=2,"
+        f"WrapStyle=1,"
+        f"MarginV={sub_cfg.get('margin_v', margin_v)},"
+        f"MarginL=40,"
+        f"MarginR=40"
     )
 
     encoder_args = _build_encoder_args(cfg or {})

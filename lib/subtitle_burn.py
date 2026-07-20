@@ -9,10 +9,12 @@ from PIL import Image, ImageDraw, ImageFont
 
 
 FONT_PATH = "/Library/Fonts/AdobeHeitiStd-Regular.otf"
-FONT_SIZE = 24
-IMG_W = 540
+FONT_SIZE = 60
+IMG_W = 1080
 IMG_H = 1920
 MARGIN_BOTTOM = 80
+# 防止长句换行后断词尴尬：边缘留一个半字符的余量
+MARGIN_SIDE = int(FONT_SIZE * 1.5)  # ~90px
 
 
 def _parse_srt(srt_path: str) -> list:
@@ -35,8 +37,9 @@ def _parse_srt(srt_path: str) -> list:
 def _render_png(text: str, idx: int = 0) -> str:
     """渲染单条字幕 PNG，返回临时路径"""
     font = ImageFont.truetype(FONT_PATH, FONT_SIZE)
-    max_w = IMG_W - 200
+    max_w = IMG_W - MARGIN_SIDE * 2
     lines = []
+    # 先保留原有的 SRT 换行（edge-tts 自动生成的段落断句）
     for para in text.split("\n"):
         line = ""
         for ch in para:
@@ -51,6 +54,10 @@ def _render_png(text: str, idx: int = 0) -> str:
             lines.append(line)
 
     lh = int(FONT_SIZE * 1.5)
+    # 最多两行，超出则裁掉行数
+    SHOW_LINES = 2
+    if len(lines) > SHOW_LINES:
+        lines = lines[:SHOW_LINES]
     total_h = len(lines) * lh + 40
     img = Image.new("RGBA", (IMG_W, total_h), (0, 0, 0, 160))
     draw = ImageDraw.Draw(img)
