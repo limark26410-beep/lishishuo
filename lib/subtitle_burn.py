@@ -38,27 +38,20 @@ def _render_png(text: str, idx: int = 0) -> str:
     """渲染单条字幕 PNG，返回临时路径"""
     font = ImageFont.truetype(FONT_PATH, FONT_SIZE)
     max_w = IMG_W - MARGIN_SIDE * 2
-    lines = []
-    # 先保留原有的 SRT 换行（edge-tts 自动生成的段落断句）
-    for para in text.split("\n"):
-        line = ""
-        for ch in para:
-            test = line + ch
-            tw = font.getbbox(test)[2]
-            if tw > max_w and line:
-                lines.append(line)
-                line = ch
-            else:
-                line = test
-        if line:
-            lines.append(line)
+    # 去 SRT 换行，合成一行
+    one_line = text.replace("\n", "").replace("\r", "")
+    tw = font.getbbox(one_line)[2]
+    if tw > max_w:
+        # 超宽就等比缩字号到能塞下
+        ratio = max_w / tw
+        fs = int(FONT_SIZE * ratio)
+        fs = max(fs, 36)  # 最小 36，不能再小了
+        font = ImageFont.truetype(FONT_PATH, fs)
+        tw = font.getbbox(one_line)[2]
 
-    lh = int(FONT_SIZE * 1.5)
-    # 最多两行，超出则裁掉行数
-    SHOW_LINES = 2
-    if len(lines) > SHOW_LINES:
-        lines = lines[:SHOW_LINES]
-    total_h = len(lines) * lh + 40
+    lines = [one_line]
+    lh = int(font.size * 1.5)
+    total_h = lh + 40
     img = Image.new("RGBA", (IMG_W, total_h), (0, 0, 0, 160))
     draw = ImageDraw.Draw(img)
     for i, lt in enumerate(lines):
