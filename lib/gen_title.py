@@ -33,8 +33,6 @@ DUR = 6                    # 片头时长（秒）
 W, H = 1080, 1920
 FPS = 25
 COLOR = "0xD4AF37"         # 金色
-GAP_MAIN_SUB = 937 - (828 + 69 + 25)  # main2底到sub顶的间距
-
 def render(main_texts, subtitle_text, out_dir):
     """
     main_texts: list[str] — 主标题可以是一行或两行
