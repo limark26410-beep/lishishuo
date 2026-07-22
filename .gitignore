@@ -15,6 +15,58 @@ episodes/*/_merged_video_v2.mp4
 episodes/*/_audio_mixed*.mp4
 logs/
 
-# Environment variables (API keys, secrets)
+# 排除临时/测试/二进制文件
+episodes/*/__t*.png
+episodes/*/_char*.ass
+episodes/*/_binary*.ass
+episodes/*/_ass_test*.png
+episodes/*/0*-final*.mp4
+episodes/*/0*-synced*.mp4
+episodes/*/title_clip.mp4
+episodes/*/title_card.png
+episodes/*/title/*
+episodes/*/_concat_list.txt
+episodes/*/_clean*.mp4
+episodes/*/_clean*.ass
+episodes/*/_clean*.png
+episodes/*/_d*.ass
+episodes/*/_d*r.png
+episodes/*/_dbg*.png
+episodes/*/_debug*.png
+episodes/*/_f*.png
+episodes/*/_subtitled*.mp4
+episodes/*/_content*.mp4
+episodes/*/_concat_temp.mp4
+episodes/*/screenshots/
+
+# 排除 episodes 内所有下划线开头的测试文件
+episodes/*/_*
+
+# 排除 episodes 内多余二进制/临时文件
+episodes/*/combined.mp4
+episodes/*/concat*.txt
+episodes/*/pipeline.log
+episodes/*/subs.ass
+episodes/*/title_compat*.mp4
+episodes/*/title_with_audio.mp4
+episodes/*/subs_split.srt
+episodes/*/subs_shifted_GOOD.srt
+
+# 素材文本不进仓库(已归档到 桌面/历史说素材/)
+episodes/*/script.txt
+episodes/*/script_body.txt
+episodes/*/subs_shifted.srt
+episodes/*/script*.txt
+episodes/*/*.srt
+
+config.yaml.bak
+archive_eps.py
+rework_ep7.py
+run_ep89.py
+
+# 排除报告文件
+第七期返工-完工汇报.md
+
+# Environment variables (secrets)
 .env
 .env.local

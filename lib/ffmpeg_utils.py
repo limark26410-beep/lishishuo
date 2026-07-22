@@ -21,11 +21,15 @@ from pathlib import Path
 def get_media_duration(path: str) -> float:
     """获取音视频时长（秒）"""
     r = subprocess.run(
-        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-         "-of", "default=noprint_wrappers=1:nokey=1", path],
-        capture_output=True, text=True, check=True
+        ["ffmpeg", "-i", path],
+        capture_output=True, text=True
     )
-    return float(r.stdout.strip())
+    import re
+    m = re.search(r'Duration: (\d+):(\d+):(\d+\.?\d*)', r.stderr)
+    if not m:
+        raise RuntimeError(f"Could not parse duration from ffmpeg for {path}")
+    h, min_, s = float(m.group(1)), float(m.group(2)), float(m.group(3))
+    return h * 3600 + min_ * 60 + s
 
 
 def _detect_platform_encoder(cfg: dict) -> tuple:
@@ -43,7 +47,7 @@ def _detect_platform_encoder(cfg: dict) -> tuple:
         encoder = platform_map.get(platform, "libx264")
 
     opts = video_cfg.get("encoder_options", {}).get(encoder, {})
-    base = ["-pix_fmt", video_cfg.get("pixel_format", "yuv420p"), "-an"]
+    base = ["-pix_fmt", video_cfg.get("pixel_format", "yuv420p")]
 
     if encoder == "h264_videotoolbox":
         return encoder, [
@@ -106,7 +110,7 @@ def build_ken_burns_clip(
     cmd = (["ffmpeg", "-y", "-loop", "1", "-i", str(image_path),
             "-vf", vf, "-t", f"{duration_sec:.2f}"]
            + encoder_args
-           + [output_path])
+           + ["-an", output_path])
 
     subprocess.run(cmd, check=True, capture_output=True, text=True)
 

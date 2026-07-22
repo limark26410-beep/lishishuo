@@ -42,12 +42,16 @@ def generate_tts(
         raise RuntimeError(f"edge-tts failed: {result.stderr}")
 
     # 获取音频时长
+    import re
     dur_result = subprocess.run(
-        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-         "-of", "default=noprint_wrappers=1:nokey=1", output_audio],
-        capture_output=True, text=True, check=True
+        ["ffmpeg", "-i", output_audio],
+        capture_output=True, text=True
     )
-    duration_sec = float(dur_result.stdout.strip())
+    m = re.search(r'Duration: (\d+):(\d+):(\d+\.?\d*)', dur_result.stderr)
+    if not m:
+        raise RuntimeError(f"Could not parse duration from ffmpeg for {output_audio}")
+    h, min_, s = float(m.group(1)), float(m.group(2)), float(m.group(3))
+    duration_sec = h * 3600 + min_ * 60 + s
 
     print(f"  TTS done: {Path(output_audio).name} -> {duration_sec:.1f}s")
     print(f"  Subs: {Path(output_subs).name}")

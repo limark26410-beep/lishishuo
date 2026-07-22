@@ -1,88 +1,97 @@
 #!/usr/bin/env python3
 """
-片头标题生成器 · 固定模板
-====================================
-从第四期（春秋战国）片头提取的固定参数:
-  主标题 fs=69 → center y≈877
-  副标题  fs=67 → center y≈967
-  金线    y=1131, 400×3px, 金色 #D4AF37
+Title card generator v3 - Episode 4 style template
+===================================================
+Layout (top to bottom, vertically centered):
+  Main title  fs=69  GOLD  centered  (1-2 lines, 25px gap)
+  Series line fs=36  WHITE centered  "上下五千年 · 第X期"
+  Gold bar    400x3px GOLD  close below series line
 
-支持两行主标题（如 "秦汉：" + "大一统时代"），行距 25px。
-副标题位置与第四期完全一致。
-
-音频处理:
-  title_clip.mp4 只含视频流（无音频）。
-  拼接时用 filter_complex concat 合并视频，音频直接从原始 final.mp4 复制，
-  确保 0 秒起就有声。
+Title clip fixed at 6 seconds (changing breaks -6s subtitle sync).
 """
+
 import subprocess, os, sys
 from PIL import Image, ImageDraw, ImageFont
 
 FONT = '/System/Library/Fonts/PingFang.ttc'
 
-# ===== 模板常量（写死，不准改）=====
-MAIN_FS = 69               # 主标题字体大小
-MAIN_BASELINE = 828        # 单行主标题 baseline (FFmpeg drawtext y=text top=846)
-SUB_FS = 67                # 副标题字体大小
-SUB_Y = 937                # 副标题 y-top (FFmpeg)
-GL_Y = 1131                # 金线顶部y坐标
-GL_W = 400                 # 金线宽度
-GL_H = 3                   # 金线高度
-LINE_GAP = 25              # 行间间距（与第四期一致）
-DUR = 6                    # 片头时长（秒）
+# Template constants
+MAIN_FS = 69          # main title (GOLD)
+SERIES_FS = 36        # series line (WHITE, ep8+ use 36, ep7 used 42)
+LINE_GAP = 25         # main title line spacing
+SERIES_GAP = 50       # main -> series gap
+GLINE_GAP = 18        # series -> gold bar gap
+GL_W = 400            # gold bar width
+GL_H = 3              # gold bar height
+DUR = 6               # fixed 6s, do not change
 W, H = 1080, 1920
 FPS = 25
-COLOR = "0xD4AF37"         # 金色
-def render(main_texts, subtitle_text, out_dir):
+GOLD = "0xD4AF37"
+WHITE = "0xE8E8E0"
+BG = "0x0a0503"
+
+# PIL colors
+GOLD_RGBA = (212, 175, 55, 255)
+WHITE_RGBA = (232, 232, 224, 255)
+BG_RGBA = (10, 5, 3, 255)
+
+
+def render(main_texts, series_text, out_dir):
     """
-    main_texts: list[str] — 主标题可以是一行或两行
-      单行: ["大一统时代"]
-      两行: ["秦汉：", "大一统时代"]
-    subtitle_text: str — 副标题
+    main_texts: list[str] - 1-2 main title lines
+      e.g. ["两晋南北朝", "乱世与融合"]
+    series_text: str - series line
+      e.g. "上下五千年 · 第七期"
     """
     os.makedirs(out_dir, exist_ok=True)
     clip_path = os.path.join(out_dir, "title_clip.mp4")
     card_path = os.path.join(out_dir, "title_card.png")
     gl_x = (W - GL_W) // 2
 
-    # ── 计算主标题各行的 y 坐标 ──
-    # 若单行: 与第四期一致，y_top=846
-    # 若两行: 第一行 846-line_gap-fs = 846-25-69 = 752, 第二行 752+25+69 = 846
-    if len(main_texts) == 1:
-        main_ys = [846]  # 与第四期一致
-    elif len(main_texts) >= 2:
-        # 第二行与第四期主标题位置一致 (y=846), 第一行往上移
-        main_ys = [846 - LINE_GAP - MAIN_FS, 846]
-    else:
-        raise ValueError("main_texts must have at least 1 line")
+    # Calculate Y positions (vertically centered block)
+    n_main = len(main_texts)
+    if n_main < 1 or n_main > 2:
+        raise ValueError("main_texts must have 1 or 2 lines")
 
-    # ── FFmpeg filter_complex ──
+    block_h = (MAIN_FS * n_main + LINE_GAP * (n_main - 1)
+               + SERIES_GAP + SERIES_FS + GLINE_GAP + GL_H)
+    block_top = (H - block_h) // 2
+
+    main_ys = []
+    y = block_top
+    for i in range(n_main):
+        main_ys.append(y)
+        y += MAIN_FS + LINE_GAP
+
+    series_y = block_top + MAIN_FS * n_main + LINE_GAP * (n_main - 1) + SERIES_GAP
+    gl_y = series_y + SERIES_FS + GLINE_GAP
+
+    # FFmpeg filter_complex
     label = "bg"
-    parts = [f"color=c=0x0a0503:s={W}x{H}:d={DUR}:r={FPS}[{label}]"]
+    parts = [f"color=c={BG}:s={W}x{H}:d={DUR}:r={FPS}[{label}]"]
 
-    # 主标题每行
     for i, (text, y_top) in enumerate(zip(main_texts, main_ys)):
         new_label = f"t{i}"
         parts.append(
             f"[{label}]drawtext=text='{text}':fontfile={FONT}:"
-            f"fontsize={MAIN_FS}:fontcolor={COLOR}:"
+            f"fontsize={MAIN_FS}:fontcolor={GOLD}:"
             f"x=(w-text_w)/2:y={y_top}[{new_label}]"
         )
         label = new_label
 
-    # 副标题
-    sub_label = "tsub"
+    # Series line - WHITE
+    ser_label = "tseries"
     parts.append(
-        f"[{label}]drawtext=text='{subtitle_text}':fontfile={FONT}:"
-        f"fontsize={SUB_FS}:fontcolor={COLOR}:"
-        f"x=(w-text_w)/2:y={SUB_Y}[{sub_label}]"
+        f"[{label}]drawtext=text='{series_text}':fontfile={FONT}:"
+        f"fontsize={SERIES_FS}:fontcolor={WHITE}:"
+        f"x=(w-text_w)/2:y={series_y}[{ser_label}]"
     )
-    label = sub_label
+    label = ser_label
 
-    # 金线
+    # Gold bar - GOLD
     parts.append(
-        f"[{label}]drawbox=x={gl_x}:y={GL_Y}:w={GL_W}:h={GL_H}:"
-        f"color={COLOR}:t=fill[vout]"
+        f"[{label}]drawbox=x={gl_x}:y={gl_y}:w={GL_W}:h={GL_H}:"
+        f"color={GOLD}:t=fill[vout]"
     )
 
     fc = ";".join(parts)
@@ -94,34 +103,39 @@ def render(main_texts, subtitle_text, out_dir):
         print("FFmpeg failed:", r.stderr[:800], file=sys.stderr)
         return None, None
 
-    # ── PNG 卡 ──
-    img = Image.new("RGBA", (W, H), (10, 5, 3, 255))
+    # PNG card (preview)
+    img = Image.new("RGBA", (W, H), BG_RGBA)
     draw = ImageDraw.Draw(img)
+
     for text, y_top in zip(main_texts, main_ys):
         fm = ImageFont.truetype(FONT, MAIN_FS)
         bm = fm.getbbox(text)
-        draw.text(((W - (bm[2] - bm[0])) // 2, y_top), text, (212, 175, 55, 255), font=fm)
-    fs = ImageFont.truetype(FONT, SUB_FS)
-    bs = fs.getbbox(subtitle_text)
-    draw.text(((W - (bs[2] - bs[0])) // 2, SUB_Y), subtitle_text, (212, 175, 55, 255), font=fs)
+        draw.text(((W - (bm[2] - bm[0])) // 2, y_top), text, GOLD_RGBA, font=fm)
+
+    fs = ImageFont.truetype(FONT, SERIES_FS)
+    bs = fs.getbbox(series_text)
+    draw.text(((W - (bs[2] - bs[0])) // 2, series_y), series_text, WHITE_RGBA, font=fs)
+
     for y in range(GL_H):
         for x in range(GL_W):
-            draw.point((gl_x + x, GL_Y + y), (212, 175, 55, 255))
+            draw.point((gl_x + x, gl_y + y), GOLD_RGBA)
     img.save(card_path)
 
     sz_mb = os.path.getsize(clip_path) / 1024 / 1024
     sz_kb = os.path.getsize(card_path) / 1024
-    print(f"  OK: title_clip.mp4 ({sz_mb:.1f}MB)")
-    print(f"  OK: title_card.png ({sz_kb:.0f}KB)")
+    print(f"  title_clip.mp4 ({sz_mb:.1f}MB)")
+    print(f"  title_card.png ({sz_kb:.0f}KB)")
+    print(f"  main_ys={[int(y) for y in main_ys]}, series_y={series_y}, gl_y={gl_y}")
+    print(f"  main=GOLD(fs{MAIN_FS}) | series=WHITE(fs{SERIES_FS})")
     return clip_path, card_path
 
 
 if __name__ == "__main__":
     import argparse
-    p = argparse.ArgumentParser(description="片头标题生成器 · 固定模板")
+    p = argparse.ArgumentParser(description="Title card generator v3 - Episode 4 style")
     p.add_argument("--main", nargs="+", required=True,
-                   help="主标题（支持多行, 如 --main 秦汉： 大一统时代）")
-    p.add_argument("--sub", required=True, help="副标题")
+                   help="Main title 1-2 lines (--main 两晋南北朝 乱世与融合)")
+    p.add_argument("--series", required=True, help="Series line (--series '上下五千年 · 第七期')")
     p.add_argument("--output-dir", required=True)
     a = p.parse_args()
-    render(a.main, a.sub, a.output_dir)
+    render(a.main, a.series, a.output_dir)

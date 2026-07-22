@@ -1,9 +1,10 @@
 """
-字幕渲染模块
-用 HEVC with alpha + overlay 滤镜烧录字幕（无需 libass）
+Subtitle rendering module v4
+h264+colorkey subtitle burn, real-pixel positioning (1080x1920)
+PlayResX=1080, PlayResY=1920, FontSize=60, MarginV=140
 """
 
-import os, subprocess, tempfile, shutil
+import os, subprocess, tempfile, shutil, re
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
@@ -12,13 +13,88 @@ FONT_PATH = "/Library/Fonts/AdobeHeitiStd-Regular.otf"
 FONT_SIZE = 60
 IMG_W = 1080
 IMG_H = 1920
-MARGIN_BOTTOM = 80
-# 防止长句换行后断词尴尬：边缘留一个半字符的余量
-MARGIN_SIDE = int(FONT_SIZE * 1.5)  # ~90px
+MARGIN_BOTTOM = 140       # bottom margin in real pixels
+MARGIN_SIDE = int(FONT_SIZE * 1.5)
+MAX_CHARS_PER_LINE = 14
+MAX_LINES = 2
+BAR_HEIGHT = 300           # fixed subtitle bar height (fits 2 lines)
+PUNCTS = set('\uff0c\u3002\uff01\uff1f\u3001\uff1b\uff1a')
 
+
+# ============================================================
+# Text wrapping & entry processing
+# ============================================================
+
+def _wrap_text(text: str, max_chars: int = MAX_CHARS_PER_LINE) -> str:
+    """Smart line wrap: <=14 chars/line, <=2 lines, prefer punctuation breaks. Never drop chars."""
+    text = text.replace('\n', '').replace('\r', '').strip()
+    if not text:
+        return ''
+    if len(text) <= max_chars:
+        return text
+
+    limit = max_chars * MAX_LINES  # 28
+
+    if len(text) <= limit:
+        return _split_balanced(text, max_chars)
+
+    # Overlong: widen line limit rather than truncate
+    for extra in range(5):
+        result = _split_balanced(text, max_chars + extra)
+        if result and '\n' in result:
+            return result
+    return _split_balanced(text, max_chars + 4)
+
+
+def _split_balanced(text: str, per_line: int) -> str:
+    """Split at punctuation near midpoint"""
+    if len(text) <= per_line:
+        return text
+
+    candidates = [i + 1 for i, ch in enumerate(text) if ch in PUNCTS]
+    mid = len(text) // 2
+
+    best, best_score = None, float('inf')
+    for c in candidates:
+        if c <= per_line and (len(text) - c) <= per_line:
+            score = abs(c - mid)
+            if score < best_score:
+                best_score, best = score, c
+
+    if best:
+        return f"{text[:best]}\n{text[best:]}"
+
+    for c in candidates:
+        if c <= per_line:
+            best = c
+    if best:
+        return f"{text[:best]}\n{text[best:]}"
+
+    return f"{text[:per_line]}\n{text[per_line:per_line*2]}"
+
+
+def _split_long_text(text: str, max_chars: int) -> list:
+    """Split long text into chunks at punctuation boundaries"""
+    chunks = []
+    while len(text) > max_chars:
+        split_at = max_chars
+        for i in range(max_chars - 1, max_chars // 2, -1):
+            if text[i] in PUNCTS:
+                split_at = i + 1
+                break
+        chunks.append(text[:split_at])
+        text = text[split_at:]
+    if text:
+        chunks.append(text)
+    return chunks
+
+
+# ============================================================
+# SRT parsing & postprocessing
+# ============================================================
 
 def _parse_srt(srt_path: str) -> list:
-    """解析 SRT，返回 [(start_sec, end_sec, text), ...]"""
+    """Parse SRT, return [(start_sec, end_sec, text), ...]"""
     def _ts(t: str) -> float:
         parts = t.replace(",", ".").split(":")
         return float(parts[0]) * 3600 + float(parts[1]) * 60 + float(parts[2])
@@ -34,31 +110,100 @@ def _parse_srt(srt_path: str) -> list:
     return entries
 
 
+def postprocess_srt(srt_path: str, output_path: str = None) -> str:
+    """
+    SRT postprocess: split long entries + smart line wrap
+    - Entries >28 chars split by punctuation, time distributed by char count
+    - No merging (edge-tts entries already have natural pauses)
+    - <=14 chars/line, <=2 lines, zero character loss
+    """
+    if output_path is None:
+        output_path = srt_path
+
+    entries = _parse_srt(srt_path)
+    if not entries:
+        return output_path
+
+    processed = []
+    for start, end, text in entries:
+        t = text.replace('\n', '').replace('\r', '').strip()
+        if not t:
+            continue
+        dur = end - start
+        if dur <= 0:
+            continue
+
+        if len(t) > 28:
+            chunks = _split_long_text(t, 28)
+            chars_per_sec = len(t) / dur if dur > 0 else 10
+            chunk_start = start
+            for chunk in chunks:
+                chunk_dur = len(chunk) / chars_per_sec
+                processed.append((chunk_start, chunk_start + chunk_dur, chunk))
+                chunk_start += chunk_dur
+        else:
+            processed.append((start, end, t))
+
+    lines_out = []
+    idx = 1
+    for start, end, text in processed:
+        wrapped = _wrap_text(text)
+        dur = end - start
+        if dur <= 0 or not wrapped:
+            continue
+
+        def _fmt(sec: float) -> str:
+            h = int(sec // 3600)
+            m = int((sec % 3600) // 60)
+            s = sec % 60
+            return f"{h:02d}:{m:02d}:{s:06.3f}".replace(".", ",")
+
+        lines_out.append(str(idx))
+        lines_out.append(f"{_fmt(start)} --> {_fmt(end)}")
+        lines_out.append(wrapped)
+        lines_out.append("")
+        idx += 1
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines_out))
+
+    print(f"  SRT postprocess: {len(entries)}->{idx-1} entries -> {output_path}")
+    return output_path
+
+
+# ============================================================
+# PNG rendering - fixed bar height, bottom-aligned
+# ============================================================
+
 def _render_png(text: str, idx: int = 0) -> str:
-    """渲染单条字幕 PNG，返回临时路径"""
+    """Render subtitle PNG: fixed BAR_HEIGHT, text bottom-aligned with MARGIN_BOTTOM"""
     font = ImageFont.truetype(FONT_PATH, FONT_SIZE)
     max_w = IMG_W - MARGIN_SIDE * 2
-    # 去 SRT 换行，合成一行
-    one_line = text.replace("\n", "").replace("\r", "")
-    tw = font.getbbox(one_line)[2]
-    if tw > max_w:
-        # 超宽就等比缩字号到能塞下
-        ratio = max_w / tw
-        fs = int(FONT_SIZE * ratio)
-        fs = max(fs, 36)  # 最小 36，不能再小了
-        font = ImageFont.truetype(FONT_PATH, fs)
-        tw = font.getbbox(one_line)[2]
+    lines = text.split('\n')
 
-    lines = [one_line]
-    lh = int(font.size * 1.5)
-    total_h = lh + 40
-    img = Image.new("RGBA", (IMG_W, total_h), (0, 0, 0, 160))
+    # Shrink font if needed to fit width
+    needs_shrink = any(font.getbbox(lt)[2] > max_w for lt in lines)
+    if needs_shrink:
+        max_tw = max(font.getbbox(lt)[2] for lt in lines)
+        ratio = max_w / max_tw
+        fs = max(int(FONT_SIZE * ratio), 36)
+        font = ImageFont.truetype(FONT_PATH, fs)
+
+    # Fixed-height PNG, black background (for colorkey)
+    img = Image.new("RGBA", (IMG_W, BAR_HEIGHT), (0, 0, 0, 255))
     draw = ImageDraw.Draw(img)
+
+    lh = int(font.size * 1.5)
+    total_text_h = lh * len(lines)
+    # Bottom-align: text starts at BAR_HEIGHT - total_text_h - padding
+    padding = 20
+    y_start = BAR_HEIGHT - total_text_h - padding
+
     for i, lt in enumerate(lines):
         tw = font.getbbox(lt)[2]
         x = (IMG_W - tw) // 2
-        y = 20 + i * lh
-        draw.text((x + 1, y + 1), lt, fill=(0, 0, 0, 200), font=font)
+        y = y_start + i * lh
+        draw.text((x + 1, y + 1), lt, fill=(80, 80, 80, 255), font=font)
         draw.text((x, y), lt, fill=(255, 255, 255, 255), font=font)
 
     fd, out = tempfile.mkstemp(suffix=".png", prefix=f"s{idx}_")
@@ -67,6 +212,10 @@ def _render_png(text: str, idx: int = 0) -> str:
     return out
 
 
+# ============================================================
+# Subtitle burn entry point
+# ============================================================
+
 def burn_subtitles_overlay(
     video_path: str,
     srt_path: str,
@@ -74,12 +223,13 @@ def burn_subtitles_overlay(
     encode_args: list = None,
 ) -> str:
     """
-    用 HEVC with alpha + overlay 烧录字幕
-    1. 渲染所有字幕 PNG（相同文本缓存复用）
-    2. concat 拼成字幕视频（HEVC + alpha，快）
-    3. overlay 叠加到主视频
+    h264+colorkey subtitle burn (real-pixel positioning)
+    1. Render all subtitle PNGs (fixed BAR_HEIGHT)
+    2. Encode subtitle track as h264
+    3. colorkey black->transparent + overlay at fixed Y
+    Y = IMG_H - BAR_HEIGHT - MARGIN_BOTTOM = 1920 - 300 - 140 = 1480
     """
-    print("  Subtitle burn (HEVC alpha overlay)...")
+    print("  Subtitle burn (h264+colorkey, real-pixel pos)...")
 
     entries = _parse_srt(srt_path)
     if not entries:
@@ -92,77 +242,57 @@ def burn_subtitles_overlay(
     print(f"  SRT: {len(entries)} entries")
 
     tmp_dir = tempfile.mkdtemp(prefix="subburn_")
-    text_cache = {}  # text → png_path
+    text_cache = {}
     concat_lines = []
     render_count = 0
 
-    for i, (start, end, text) in enumerate(entries):
+    for start, end, text in entries:
         dur = end - start
         if dur <= 0:
             continue
-
         if text not in text_cache:
             text_cache[text] = _render_png(text, idx=render_count)
             render_count += 1
-
         concat_lines.append(f"file '{text_cache[text]}'")
         concat_lines.append(f"duration {dur:.3f}")
 
-    print(f"  Rendered {render_count} unique PNGs for {len(entries)} entries")
+    print(f"  Rendered {render_count} unique PNGs (BAR_HEIGHT={BAR_HEIGHT}px)")
 
-    # 写 concat 文件
     cp = os.path.join(tmp_dir, "c.txt")
     with open(cp, "w") as f:
         f.write("\n".join(concat_lines))
 
-    # 生成带 Alpha 的字幕视频（HEVC 比 ProRes 快 100 倍）
-    sv = os.path.join(tmp_dir, "subs.mov")
-    print(f"  Encoding subtitle video (HEVC + alpha)...")
-    # ProRes 4444 supports alpha channel
+    sv = os.path.join(tmp_dir, "subs.mp4")
+    print(f"  Encoding subtitle video (h264_videotoolbox)...")
     subprocess.run([
         "ffmpeg", "-y", "-f", "concat", "-safe", "0",
         "-i", cp,
-        "-c:v", "prores_ks",
-        "-profile:v", "4444",
-        "-vendor", "apl0",
-        "-pix_fmt", "yuva444p10le",
-        "-r", "25",
+        "-c:v", "h264_videotoolbox", "-b:v", "2000k",
+        "-pix_fmt", "yuv420p", "-r", "25",
         sv,
     ], check=True, capture_output=True, text=True, timeout=600)
     print(f"  Subtitle video: {os.path.getsize(sv)/1024/1024:.1f}MB")
 
-    # 获取视频尺寸
-    r = subprocess.run(
-        ["ffprobe", "-v", "error", "-show_entries", "stream=width,height",
-         "-of", "default=noprint_wrappers=1:nokey=1", video_path],
-        capture_output=True, text=True, check=True,
-    )
-    dims = r.stdout.strip().split("\n")
-    vh = int(dims[1]) if len(dims) > 1 and dims[1] else IMG_H
-
-    # Overlay：字幕底部固定位置
-    ov_y = vh - MARGIN_BOTTOM
+    # Overlay Y: subtitle bar sits at bottom with MARGIN_BOTTOM clearance
+    ov_y = IMG_H - BAR_HEIGHT - MARGIN_BOTTOM  # 1920 - 300 - 140 = 1480
     enc = encode_args or [
         "-c:v", "h264_videotoolbox", "-b:v", "3000k",
         "-c:a", "copy",
     ]
 
-    print(f"  Overlaying subtitles...")
+    print(f"  Overlaying @ y={ov_y} (margin_bottom={MARGIN_BOTTOM})...")
     subprocess.run([
         "ffmpeg", "-y",
-        "-i", video_path,
-        "-i", sv,
+        "-i", video_path, "-i", sv,
         "-filter_complex",
-        f"[0:v][1:v]overlay=0:{ov_y}:format=auto[v]",
+        f"[1:v]colorkey=0x000000:similarity=0.1:blend=0.0[sub];"
+        f"[0:v][sub]overlay=0:{ov_y}[v]",
         "-map", "[v]", "-map", "0:a",
-        *enc,
-        "-shortest",
-        output_path,
+        *enc, "-shortest", output_path,
     ], check=True, capture_output=True, text=True, timeout=900)
 
-    print(f"  ✅ Subtitles burned: {Path(output_path).name}")
+    print(f"  Done: {Path(output_path).name}")
 
-    # 清理
     shutil.rmtree(tmp_dir, ignore_errors=True)
     for p in text_cache.values():
         try:

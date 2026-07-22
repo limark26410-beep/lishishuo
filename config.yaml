@@ -52,11 +52,11 @@ video:
     zoom_start: 1.0
   pixel_format: yuv420p
   subtitle:
-    border_style: 3
+    border_style: 1
     font: AdobeHeitiStd-Regular
     font_color: '&H00FFFFFF'
     font_linux: Noto Sans CJK SC
-    font_size: 60
+    font_size: 9
     margin_v: 40
     outline_color: '&H90000000'
   transition: concat
@@ -64,3 +64,10 @@ video:
   xfade:
     duration: 1.0
     transition: fade
+
+# ★ subtitle config verified 2026-07-21:
+#   FontSize=9 in ASS 384-space ≈ 60px at 1080p
+#   SRT lines split to ≤14 chars/line, max 2 lines
+#   BorderStyle=1 (outline only, no opaque box)
+#   Command: subtitles=subs.srt:force_style='FontName=AdobeHeitiStd-Regular,FontSize=9,PrimaryColour=&H00FFFFFF,OutlineColour=&H90000000,BorderStyle=1,Alignment=2'
+
