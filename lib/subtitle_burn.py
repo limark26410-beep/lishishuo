@@ -13,7 +13,7 @@ FONT_PATH = "/Library/Fonts/AdobeHeitiStd-Regular.otf"
 FONT_SIZE = 60
 IMG_W = 1080
 IMG_H = 1920
-MARGIN_BOTTOM = 140       # bottom margin in real pixels
+MARGIN_BOTTOM = 280       # bottom margin in real pixels
 MARGIN_SIDE = int(FONT_SIZE * 1.5)
 MAX_CHARS_PER_LINE = 14
 MAX_LINES = 2
@@ -26,7 +26,7 @@ PUNCTS = set('\uff0c\u3002\uff01\uff1f\u3001\uff1b\uff1a')
 # ============================================================
 
 def _wrap_text(text: str, max_chars: int = MAX_CHARS_PER_LINE) -> str:
-    """Smart line wrap: <=14 chars/line, <=2 lines, prefer punctuation breaks. Never drop chars."""
+    """Strict line wrap: <=max_chars/line, <=2 lines. Never overflow."""
     text = text.replace('\n', '').replace('\r', '').strip()
     if not text:
         return ''
@@ -35,25 +35,23 @@ def _wrap_text(text: str, max_chars: int = MAX_CHARS_PER_LINE) -> str:
 
     limit = max_chars * MAX_LINES  # 28
 
-    if len(text) <= limit:
-        return _split_balanced(text, max_chars)
+    # Should have been split by postprocess_srt if > 28
+    # If somehow still > 28, truncate to 28 to enforce the rule
+    if len(text) > limit:
+        text = text[:limit]
 
-    # Overlong: widen line limit rather than truncate
-    for extra in range(5):
-        result = _split_balanced(text, max_chars + extra)
-        if result and '\n' in result:
-            return result
-    return _split_balanced(text, max_chars + 4)
+    return _split_balanced(text, max_chars)
 
 
 def _split_balanced(text: str, per_line: int) -> str:
-    """Split at punctuation near midpoint"""
+    """Split at punctuation near midpoint. STRICT: both halves <= per_line."""
     if len(text) <= per_line:
         return text
 
     candidates = [i + 1 for i, ch in enumerate(text) if ch in PUNCTS]
     mid = len(text) // 2
 
+    # Find punctuation where both halves <= per_line, closest to midpoint
     best, best_score = None, float('inf')
     for c in candidates:
         if c <= per_line and (len(text) - c) <= per_line:
@@ -64,12 +62,7 @@ def _split_balanced(text: str, per_line: int) -> str:
     if best:
         return f"{text[:best]}\n{text[best:]}"
 
-    for c in candidates:
-        if c <= per_line:
-            best = c
-    if best:
-        return f"{text[:best]}\n{text[best:]}"
-
+    # No perfect punctuation split -> hard break at per_line (never exceed)
     return f"{text[:per_line]}\n{text[per_line:per_line*2]}"
 
 
@@ -133,8 +126,8 @@ def postprocess_srt(srt_path: str, output_path: str = None) -> str:
         if dur <= 0:
             continue
 
-        if len(t) > 28:
-            chunks = _split_long_text(t, 28)
+        if len(t) > 26:
+            chunks = _split_long_text(t, 26)
             chars_per_sec = len(t) / dur if dur > 0 else 10
             chunk_start = start
             for chunk in chunks:
@@ -221,15 +214,17 @@ def burn_subtitles_overlay(
     srt_path: str,
     output_path: str,
     encode_args: list = None,
+    margin_bottom: int = None,
 ) -> str:
     """
     h264+colorkey subtitle burn (real-pixel positioning)
     1. Render all subtitle PNGs (fixed BAR_HEIGHT)
     2. Encode subtitle track as h264
     3. colorkey black->transparent + overlay at fixed Y
-    Y = IMG_H - BAR_HEIGHT - MARGIN_BOTTOM = 1920 - 300 - 140 = 1480
+    Y = IMG_H - BAR_HEIGHT - margin_bottom = 1920 - 300 - 140(200) = 1480(1420)
     """
-    print("  Subtitle burn (h264+colorkey, real-pixel pos)...")
+    mb = margin_bottom if margin_bottom is not None else MARGIN_BOTTOM
+    print(f"  Subtitle burn (h264+colorkey, real-pixel pos, margin_bottom={mb})...")
 
     entries = _parse_srt(srt_path)
     if not entries:
@@ -273,8 +268,8 @@ def burn_subtitles_overlay(
     ], check=True, capture_output=True, text=True, timeout=600)
     print(f"  Subtitle video: {os.path.getsize(sv)/1024/1024:.1f}MB")
 
-    # Overlay Y: subtitle bar sits at bottom with MARGIN_BOTTOM clearance
-    ov_y = IMG_H - BAR_HEIGHT - MARGIN_BOTTOM  # 1920 - 300 - 140 = 1480
+    # Overlay Y: subtitle bar sits at bottom with margin_bottom clearance
+    ov_y = IMG_H - BAR_HEIGHT - mb  # 1920 - 300 - 200 = 1420 (ep12+) or 1920-300-140=1480 (ep1-11)
     enc = encode_args or [
         "-c:v", "h264_videotoolbox", "-b:v", "3000k",
         "-c:a", "copy",
