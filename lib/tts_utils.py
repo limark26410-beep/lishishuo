@@ -36,10 +36,38 @@ def generate_tts(
     ]
 
     print(f"  Running: edge-tts --voice {voice} --rate {rate}")
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
 
-    if result.returncode != 0:
-        raise RuntimeError(f"edge-tts failed: {result.stderr}")
+    # 网络波动常见（微软语音服务），自动重试
+    import time as _t
+    max_retries = 4
+    result = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
+            if result.returncode == 0:
+                break
+            err = (result.stderr or "")[-300:]
+            transient = any(k in err for k in
+                            ("Timeout", "timeout", "ConnectionError", "ConnectionTimeout",
+                             "WSServerHandshakeError", "Temporary", "Connection reset"))
+            if attempt < max_retries and transient:
+                wait = attempt * 8
+                print(f"  ⚠ 网络超时（第{attempt}次），{wait}秒后重试…")
+                _t.sleep(wait)
+                continue
+            raise RuntimeError(f"edge-tts failed: {err}")
+        except subprocess.TimeoutExpired:
+            if attempt < max_retries:
+                wait = attempt * 8
+                print(f"  ⚠ 执行超时（第{attempt}次），{wait}秒后重试…")
+                _t.sleep(wait)
+                continue
+            raise RuntimeError("edge-tts 多次超时，请检查网络或稍后再试")
+
+    if result is None or result.returncode != 0:
+        raise RuntimeError("edge-tts 失败，请检查网络")
+    if attempt > 1:
+        print(f"  ✓ 第 {attempt} 次尝试成功")
 
     # 获取音频时长
     import re

@@ -23,12 +23,31 @@ SERIES_GAP = 50       # main -> series gap
 GLINE_GAP = 18        # series -> gold bar gap
 GL_W = 400            # gold bar width
 GL_H = 3              # gold bar height
-DUR = 6               # fixed 6s, do not change
+DUR = 3               # 3s title card (抖音优化)
 W, H = 1080, 1920
 FPS = 25
 GOLD = "0xD4AF37"
 WHITE = "0xE8E8E0"
 BG = "0x0a0503"
+
+
+def configure(cfg: dict):
+    """从 config.yaml 注入片头参数"""
+    global MAIN_FS, SERIES_FS, LINE_GAP, SERIES_GAP, GLINE_GAP
+    global GL_W, GL_H, DUR, W, H, FPS
+    tc = (cfg or {}).get("title_card", {})
+    vid = (cfg or {}).get("video", {})
+    DUR = int(tc.get("duration", DUR))
+    MAIN_FS = int(tc.get("main_font_size", MAIN_FS))
+    SERIES_FS = int(tc.get("series_font_size", SERIES_FS))
+    LINE_GAP = int(tc.get("line_gap", LINE_GAP))
+    SERIES_GAP = int(tc.get("series_gap", SERIES_GAP))
+    GLINE_GAP = int(tc.get("gold_line_gap", GLINE_GAP))
+    GL_W = int(tc.get("gold_line_width", GL_W))
+    GL_H = int(tc.get("gold_line_height", GL_H))
+    W = int(vid.get("width", W))
+    H = int(vid.get("height", H))
+    FPS = int(vid.get("fps", FPS))
 
 # PIL colors
 GOLD_RGBA = (212, 175, 55, 255)

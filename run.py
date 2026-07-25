@@ -24,6 +24,7 @@ import os
 import sys
 import json
 import time
+import shutil
 import subprocess
 import threading
 from pathlib import Path
@@ -33,6 +34,14 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "lib"))
 
 import yaml
 from tts_utils import generate_tts, vtt_to_srt
+import subtitle_burn
+import gen_title
+from pipeline_steps import (
+    check_subtitles,
+    overlay_title_card,
+    archive_episode,
+    make_review_pack,
+)
 from ffmpeg_utils import (
     build_ken_burns_clip,
     concat_clips,
@@ -48,6 +57,30 @@ from ffmpeg_utils import (
 def load_config(config_path: str) -> dict:
     with open(config_path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
+
+
+def _encode_args(cfg: dict, final: bool = False) -> list:
+    """
+    按平台和配置生成编码参数
+    final=True 时强制走 libx264 + CRF（保证成片体积可控）
+    中间步骤可用硬件编码器加速
+    """
+    v = cfg.get("video", {})
+    opts264 = v.get("encoder_options", {}).get("libx264", {})
+
+    if final:
+        return ["-c:v", "libx264",
+                "-crf", str(opts264.get("crf", 26)),
+                "-preset", opts264.get("preset", "medium")]
+
+    plat = sys.platform
+    enc = v.get("encoder_platform", {}).get(plat, "libx264")
+    opts = v.get("encoder_options", {}).get(enc, {})
+    if enc == "libx264":
+        return ["-c:v", "libx264",
+                "-crf", str(opts.get("crf", 26)),
+                "-preset", opts.get("preset", "medium")]
+    return ["-c:v", enc, "-b:v", opts.get("bitrate", "3000k")]
 
 
 def _time_str(sec: float) -> str:
@@ -228,15 +261,49 @@ def step_mix(episode_dir: str, tts_result: dict, img_result: dict, cfg: dict) ->
         audio_bitrate=enc_cfg.get("audio_bitrate", "192k"),
     )
 
-    # ── 3f. 烧字幕 ──
-    print(f"\n  烧录字幕...")
-    final_output = os.path.join(episode_dir, "final.mp4")
-    burn_subtitles(
+    # ── 3f. 字幕后处理 + 自动检查 ──
+    print(f"\n  字幕折行处理...")
+    subtitle_burn.configure(cfg)
+    processed_srt = os.path.join(episode_dir, "subs_processed.srt")
+    subtitle_burn.postprocess_srt(subs_srt, processed_srt)
+
+    print(f"  自动检查（超长行 / 全文比对 / 行数）...")
+    script_path = os.path.join(episode_dir, "script.txt")
+    report = check_subtitles(processed_srt, script_path, cfg)
+    print(f"    ✓ {report['entries']} 条 | 超长行 {report.get('over_length', 0)} "
+          f"| 超行数 {report.get('over_lines', 0)} | 字数差 {report.get('char_diff', 0)}")
+
+    # ── 3g. 烧字幕（v4 真分辨率方案）──
+    sub_cfg = cfg.get("subtitle", {})
+    print(f"\n  烧录字幕 (font={sub_cfg.get('font_size')}px, "
+          f"margin_bottom={sub_cfg.get('margin_bottom')}px)...")
+    burned = os.path.join(episode_dir, "_burned.mp4")
+    _has_title = os.path.exists(os.path.join(episode_dir, "title_card.png"))
+    subtitle_burn.burn_subtitles_overlay(
         video_path=audio_mixed,
-        subtitle_path=subs_srt,
-        output_path=final_output,
-        cfg=cfg,
+        srt_path=processed_srt,
+        output_path=burned,
+        encode_args=_encode_args(cfg, final=not _has_title),
     )
+
+    # ── 3h. 片头 overlay ──
+    tc_cfg = cfg.get("title_card", {})
+    tc_dur = int(tc_cfg.get("duration", 3))
+    final_output = os.path.join(episode_dir, "final.mp4")
+    title_png = os.path.join(episode_dir, "title_card.png")
+
+    if os.path.exists(title_png):
+        print(f"\n  片头叠加 ({tc_dur}秒)...")
+        overlay_title_card(
+            video_path=burned,
+            title_card_png=title_png,
+            output_path=final_output,
+            duration=tc_dur,
+            encode_args=_encode_args(cfg, final=True),
+        )
+    else:
+        print(f"\n  ⚠ 未找到 title_card.png，跳过片头")
+        shutil.move(burned, final_output)
 
     final_dur = get_media_duration(final_output)
     print(f"\n  ✓ final.mp4: {_time_str(final_dur)} | "
@@ -260,11 +327,19 @@ def cleanup(episode_dir: str, cfg: dict):
             shutil.rmtree(d)
             print(f"  🗑 清理: clips/")
 
-    for fname in ["_merged_video.mp4", "_audio_mixed.mp4"]:
+    # 中间产物（保留 final.mp4 / audio.mp3 / script.txt / subs_processed.srt / 验收/）
+    temp_files = [
+        "_merged_video.mp4", "_audio_mixed.mp4", "_burned.mp4",
+        "subs.vtt", "subs.srt", "title_clip.mp4", "title_card.png",
+    ]
+    freed = 0
+    for fname in temp_files:
         fpath = os.path.join(episode_dir, fname)
         if os.path.exists(fpath):
+            freed += os.path.getsize(fpath)
             os.remove(fpath)
-            print(f"  🗑 清理: {fname}")
+    if freed:
+        print(f"  🗑 清理中间文件，释放 {freed/1024/1024:.0f}MB")
 
 
 # ─────────── 主入口 ───────────
@@ -284,6 +359,13 @@ def main():
     parser.add_argument("--skip-images", action="store_true", help="跳过生图")
     parser.add_argument("--no-cleanup", action="store_true", help="不清理临时文件")
     parser.add_argument("--dry-run", action="store_true", help="仅检查素材")
+    # ── 新增 ──
+    parser.add_argument("--title", help="片头主标题，如 '唐朝·盛世气象'（用·分隔主副标题）")
+    parser.add_argument("--name", help="归档名，如 '16-唐朝'（缺省用期号）")
+    parser.add_argument("--images-dir", help="本地图片目录（指定则不生图）")
+    parser.add_argument("--no-archive", action="store_true", help="不归档到素材库")
+    parser.add_argument("--only", choices=["subtitle", "title", "encode"],
+                        help="只重跑某一步（需已有中间产物）")
     args = parser.parse_args()
 
     config_path = args.config
@@ -373,12 +455,62 @@ def main():
 
     tts_result, img_result = tts_result[0], img_result[0]
 
+    # 生成片头卡
+    if args.title:
+        print(f"\n{'='*60}")
+        print("STEP 2.5: 生成片头")
+        print(f"{'='*60}")
+        gen_title.configure(cfg)
+        parts = [x.strip() for x in args.title.split("·") if x.strip()]
+        series = f"上下五千年 · 第{int(args.episode)}期"
+        try:
+            gen_title.render(parts, series, episode_dir)
+            print(f"  ✓ 片头卡已生成 ({cfg.get('title_card',{}).get('duration',3)}秒)")
+        except Exception as e:
+            print(f"  ⚠ 片头生成失败: {e}")
+
     # 混剪
     if tts_result and img_result:
         final_path = step_mix(episode_dir, tts_result, img_result, cfg)
     else:
         print("❌ TTS 或生图结果缺失")
         sys.exit(1)
+
+    # ── 归档到素材库 ──
+    if not args.no_archive:
+        ep_name = args.name or args.episode
+        print(f"\n{'='*60}")
+        print(f"STEP 4: 归档到素材库 [{ep_name}]")
+        print(f"{'='*60}")
+        try:
+            res = archive_episode(
+                episode_name=ep_name,
+                cfg=cfg,
+                final_video=final_path,
+                audio=os.path.join(episode_dir, "audio.mp3"),
+                srt=os.path.join(episode_dir, "subs_processed.srt"),
+                script=os.path.join(episode_dir, "script.txt"),
+                images_dir=(os.path.join(episode_dir, "images")
+                            if cfg.get("output", {}).get("archive_images", False) else None),
+            )
+            for k, v in res.items():
+                if v:
+                    print(f"  ✓ {k}: {v}")
+        except Exception as e:
+            print(f"  ⚠ 归档失败: {e}")
+
+    # ── 验收包 ──
+    if cfg.get("review", {}).get("enabled", True):
+        print(f"\n{'='*60}")
+        print("STEP 5: 生成验收包")
+        print(f"{'='*60}")
+        review_dir = os.path.join(episode_dir, "验收")
+        tc_dur = int(cfg.get("title_card", {}).get("duration", 3))
+        shots = make_review_pack(final_path, review_dir, title_duration=tc_dur)
+        print(f"  ✓ {len(shots)} 张截图 -> {review_dir}")
+        print(f"\n  ⚠ 请人工确认：")
+        print(f"     1. 拖到片尾，字幕和声音对得上")
+        print(f"     2. 传手机用抖音预览，字幕没被 UI 挡住")
 
     # 清理
     if not args.no_cleanup:

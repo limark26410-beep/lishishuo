@@ -1,73 +1,92 @@
-bgm:
-  path: assets/bgm.mp3
-  volume: 0.12
-cleanup:
-  clean_clips: true
-  clean_images: true
-cover:
-  subtitle_fontsize: 60
-  title_fontsize: 130
-image_gen:
-  cost_guard:
-    log_file: logs/image_costs.csv
-    max_images_per_episode: 50
+pipeline:
+  name: 历史长音频流水线
+  version: 1.0.0
+output:
+  library_root: /Users/local/Desktop/测试/
+  dirs:
+    video: 成片
+    images: 图片
+    audio: 录音
+    script: 稿子
+    subtitle: 字幕
+    shorts: 短视频
+  backup_before_overwrite: true
+  archive_images: false
+tts:
+  engine: edge-tts
+  voice: zh-CN-YunjianNeural
+  rate: -4%
+  subtitle_format: vtt
+image:
+  source: generate
+  local_dir: ''
   provider: tongyi
   style_anchor: 中国古风，水墨质感，纪录片氛围，无文字，场景宏大，写意风格
   tongyi:
     api_base: https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis
-    batch_size: 5
-    max_retries: 3
-    model: wanx2.1-t2i-turbo
-    poll_interval: 5
+    model: wanx-v1
     size: 1080*1440
-    timeout: 120
-pipeline:
-  name: 历史长音频流水线
-  version: 0.1.0
-tts:
-  engine: edge-tts
-  rate: -4%
-  subtitle_format: vtt
-  voice: zh-CN-YunjianNeural
+    batch_size: 3
+    max_retries: 3
+    poll_interval: 5
+    timeout: 600
+  cost_guard:
+    max_images_per_episode: 50
+    log_file: logs/image_costs.csv
 video:
+  width: 1080
+  height: 1920
+  fps: 25
   aspect: '9:16'
-  audio_bitrate: 192k
-  audio_codec: aac
-  encoder: libx264
-  encoder_options:
-    h264_videotoolbox:
-      bitrate: 3000k
-    libx264:
-      crf: 22
-      preset: veryfast
+  pixel_format: yuv420p
+  transition: concat
+  ken_burns:
+    zoom_start: 1.0
+    zoom_end: 1.08
+    pan_speed: 0.0004
+    preview_scale: 2
+  xfade:
+    transition: fade
+    duration: 1.0
   encoder_platform:
     darwin: h264_videotoolbox
     linux: libx264
-  fps: 25
-  height: 1920
-  ken_burns:
-    pan_speed: 0.0004
-    preview_scale: 2
-    zoom_end: 1.08
-    zoom_start: 1.0
-  pixel_format: yuv420p
-  subtitle:
-    border_style: 1
-    font: AdobeHeitiStd-Regular
-    font_color: '&H00FFFFFF'
-    font_linux: Noto Sans CJK SC
-    font_size: 9
-    margin_v: 40
-    outline_color: '&H90000000'
-  transition: concat
-  width: 1080
-  xfade:
-    duration: 1.0
-    transition: fade
-
-# ★ subtitle config verified 2026-07-21:
-#   FontSize=9 in ASS 384-space ≈ 60px at 1080p
-#   SRT lines split to ≤14 chars/line, max 2 lines
-#   BorderStyle=1 (outline only, no opaque box)
-#   Command: subtitles=subs.srt:force_style='FontName=AdobeHeitiStd-Regular,FontSize=9,PrimaryColour=&H00FFFFFF,OutlineColour=&H90000000,BorderStyle=1,Alignment=2'
-
+  encoder_options:
+    libx264:
+      crf: 26
+      preset: medium
+    h264_videotoolbox:
+      bitrate: 3000k
+  audio_codec: aac
+  audio_bitrate: 192k
+subtitle:
+  font_path: /Library/Fonts/AdobeHeitiStd-Regular.otf
+  font_path_linux: /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc
+  font_size: 60
+  margin_bottom: 400
+  bar_height: 300
+  max_chars_per_line: 14
+  max_lines: 2
+  outline_width: 3
+title_card:
+  duration: 3
+  main_font_size: 69
+  series_font_size: 36
+  line_gap: 25
+  series_gap: 50
+  gold_line_gap: 18
+  gold_line_width: 400
+  gold_line_height: 3
+bgm:
+  enabled: true
+  path: assets/bgm.mp3
+  volume: 0.12
+checks:
+  max_line_length: true
+  text_integrity: true
+  max_lines: true
+review:
+  enabled: true
+cleanup:
+  clean_clips: true
+  clean_images: false

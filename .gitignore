@@ -67,6 +67,11 @@ run_ep89.py
 # 排除报告文件
 第七期返工-完工汇报.md
 
+# Generated pipeline artifacts in episode dirs
+episodes/*/prompts.json
+episodes/*/screenshots_v2/
+episodes/*/验收/
+
 # Environment variables (secrets)
 .env
 .env.local

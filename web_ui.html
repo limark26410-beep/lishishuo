@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>历史说 · 出片工具</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 32px 20px;
+    background: #14100c;
+    color: #e8e4dc;
+    font: 15px/1.7 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  .wrap { max-width: 720px; margin: 0 auto; }
+  h1 {
+    font-size: 22px; font-weight: 600; margin: 0 0 4px;
+    color: #d4af37; letter-spacing: 2px;
+  }
+  .sub { color: #7d7466; font-size: 13px; margin-bottom: 28px; }
+  .card {
+    background: #1c1712; border: 1px solid #2e2820;
+    border-radius: 10px; padding: 22px; margin-bottom: 16px;
+  }
+  .row { margin-bottom: 18px; }
+  .row:last-child { margin-bottom: 0; }
+  label {
+    display: block; font-size: 13px; color: #a89e8c;
+    margin-bottom: 7px; letter-spacing: .5px;
+  }
+  input[type=text], input[type=number], select {
+    width: 100%; padding: 10px 12px;
+    background: #100d09; border: 1px solid #342d24;
+    border-radius: 6px; color: #e8e4dc; font-size: 14px;
+    font-family: inherit;
+  }
+  input:focus, select:focus { outline: none; border-color: #d4af37; }
+  .hint { font-size: 12px; color: #6b6357; margin-top: 6px; }
+  .ok { color: #7ea86b; }
+  .warn { color: #d4a24a; }
+  .err { color: #c96a5a; }
+  .radio-group { display: flex; gap: 18px; flex-wrap: wrap; }
+  .radio-group label {
+    display: flex; align-items: center; gap: 6px;
+    margin: 0; cursor: pointer; color: #cfc6b6; font-size: 14px;
+  }
+  button {
+    padding: 11px 26px; border: none; border-radius: 6px;
+    background: #d4af37; color: #14100c;
+    font-size: 15px; font-weight: 600; cursor: pointer;
+    font-family: inherit; letter-spacing: 1px;
+  }
+  button:hover { background: #e0bd4a; }
+  button:disabled { background: #3a332a; color: #6b6357; cursor: not-allowed; }
+  button.ghost {
+    background: transparent; border: 1px solid #4a4136;
+    color: #a89e8c; font-weight: 400; padding: 8px 16px; font-size: 13px;
+  }
+  button.ghost:hover { border-color: #d4af37; color: #d4af37; }
+  .flex { display: flex; gap: 10px; align-items: center; }
+  .flex > input { flex: 1; }
+  details summary {
+    cursor: pointer; color: #a89e8c; font-size: 13px;
+    padding: 6px 0; user-select: none;
+  }
+  details summary:hover { color: #d4af37; }
+  .adv { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 14px; }
+  .bar-bg {
+    height: 8px; background: #100d09; border-radius: 4px;
+    overflow: hidden; margin: 12px 0 8px;
+  }
+  .bar { height: 100%; background: linear-gradient(90deg,#8a6d20,#d4af37); width: 0; transition: width .4s; }
+  #logs {
+    background: #0b0906; border: 1px solid #262019; border-radius: 6px;
+    padding: 12px; height: 240px; overflow-y: auto;
+    font: 12px/1.6 "SF Mono", Menlo, monospace; color: #9c9384;
+    white-space: pre-wrap; word-break: break-all;
+  }
+  .step { color: #d4af37; font-size: 14px; }
+  .divider { height: 1px; background: #2e2820; margin: 20px 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>历史说 · 出片工具</h1>
+  <div class="sub">稿子进，成片出</div>
+
+  <div class="card" id="form">
+    <div class="row">
+      <label>期号</label>
+      <input type="text" id="episode" placeholder="选稿子后自动填" oninput="this.dataset.touched=1">
+      <div class="hint">流水线工作目录用,如 016</div>
+    </div>
+
+    <div class="row">
+      <label>稿子路径</label>
+      <div class="flex">
+        <input type="text" id="script" placeholder="点右边「选择文件」">
+        <button class="ghost" onclick="pickScript()">选择文件</button>
+      </div>
+      <div class="hint" id="scriptInfo">支持 .docx 和 .txt</div>
+    </div>
+
+    <div class="row">
+      <label>图片来源</label>
+      <div class="radio-group">
+        <label><input type="radio" name="imgsrc" value="generate" checked onchange="toggleImg()"> 自动生图</label>
+        <label><input type="radio" name="imgsrc" value="local" onchange="toggleImg()"> 本地目录</label>
+      </div>
+      <div id="imgDirBox" style="display:none;margin-top:10px">
+        <div class="flex">
+          <input type="text" id="imgdir" placeholder="点右边「选择目录」">
+          <button class="ghost" onclick="pickImages()">选择目录</button>
+        </div>
+        <div class="hint" id="imgInfo"></div>
+      </div>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="row">
+      <label>片头标题</label>
+      <input type="text" id="title" placeholder="选稿子后自动填" oninput="this.dataset.touched=1">
+      <div class="hint" id="autoFill">用 · 分隔主副标题,如「唐朝·盛世气象」</div>
+    </div>
+
+    <div class="row">
+      <label>归档名</label>
+      <input type="text" id="name" placeholder="选稿子后自动填" oninput="this.dataset.touched=1">
+      <div class="hint">存进素材库时用的名字,四类文件统一用它</div>
+    </div>
+
+    <div class="row">
+      <label>归档到</label>
+      <div class="flex">
+        <input type="text" id="a_root" value="~/Desktop/历史说素材">
+        <button class="ghost" onclick="pickRoot()">选择目录</button>
+      </div>
+      <div class="hint">成片、图片、录音、稿子、字幕会分类存进这个目录</div>
+    </div>
+
+    <details>
+      <summary>⚙ 高级设置(一般不用改)</summary>
+      <div style="margin-top:14px;padding:14px;background:#100d09;border:1px solid #342d24;border-radius:6px">
+        <label>阿里云 API Key（生图用）</label>
+        <div class="flex">
+          <input type="password" id="a_key" placeholder="粘贴新密钥以更换">
+          <button class="ghost" onclick="saveKey()">保存密钥</button>
+        </div>
+        <div class="hint" id="keyStatus">检查中…</div>
+      </div>
+
+      <div class="adv">
+        <div><label>片头时长(秒)</label><input type="number" id="a_dur" value="3"></div>
+        <div><label>字幕底边距(px)</label><input type="number" id="a_margin" value="1000"></div>
+        <div><label>字幕字号</label><input type="number" id="a_font" value="60"></div>
+        <div><label>编码质量 CRF</label><input type="number" id="a_crf" value="26"></div>
+        <div><label>TTS 声线</label>
+          <select id="a_voice"><option value="zh-CN-YunjianNeural">云健 · 男声 · 沉稳解说（当前）</option></select>
+        </div>
+        <div><label>TTS 语速</label><input type="text" id="a_rate" value="-4%"></div>
+        <div><label>生图模型</label>
+          <select id="a_model">
+            <optgroup label="通义万相">
+              <option value="wanx-v1">wanx-v1（老版，免费额度多）</option>
+              <option value="wanx2.0-t2i-turbo">wanx2.0-t2i-turbo</option>
+              <option value="wanx2.1-t2i-turbo">wanx2.1-t2i-turbo（前15期用的）</option>
+              <option value="wanx2.1-t2i-plus">wanx2.1-t2i-plus（画质更好）</option>
+              <option value="wanx2.2-t2i-flash">wanx2.2-t2i-flash（快）</option>
+              <option value="wanx2.2-t2i-plus">wanx2.2-t2i-plus（新版最好）</option>
+            </optgroup>
+          </select>
+          <div class="hint" style="margin-top:4px">额度用完会报 403，去阿里云百炼看余量</div>
+        </div>
+        <div><label>生图尺寸</label>
+          <select id="a_size">
+            <option value="1024*1024">1024*1024（1:1，兼容性最好）</option>
+            <option value="1080*1440">1080*1440（3:4）</option>
+            <option value="768*1344">768*1344（9:16）</option>
+            <option value="720*1280">720*1280（9:16 小）</option>
+          </select>
+        </div>
+      </div>
+      <div style="margin-top:12px"><button class="ghost" onclick="saveAdv()">保存设置</button>
+        <span id="advMsg" class="hint" style="margin-left:10px"></span></div>
+    </details>
+
+    <div class="divider"></div>
+    <button id="startBtn" onclick="start()">开始制作</button>
+  </div>
+
+  <div class="card" id="progressCard" style="display:none">
+    <div class="step" id="stepText">准备中…</div>
+    <div class="bar-bg"><div class="bar" id="bar"></div></div>
+    <div id="logs"></div>
+    <div style="margin-top:14px" id="doneBox"></div>
+  </div>
+</div>
+
+<script>
+function $(id){ return document.getElementById(id); }
+
+async function loadCfg(){
+  try{
+    const c = await (await fetch('/api/config')).json();
+    if(c.subtitle){
+      $('a_margin').value = c.subtitle.margin_bottom ?? 1000;
+      $('a_font').value   = c.subtitle.font_size ?? 60;
+    }
+    if(c.title_card) $('a_dur').value = c.title_card.duration ?? 3;
+    if(c.video?.encoder_options?.libx264) $('a_crf').value = c.video.encoder_options.libx264.crf ?? 26;
+    if(c.tts){ if(c.tts.voice && [...$('a_voice').options].some(o=>o.value===c.tts.voice)) $('a_voice').value=c.tts.voice; $('a_rate').value = c.tts.rate || ''; }
+    if(c.output?.library_root) $('a_root').value = c.output.library_root;
+    if(c.image?.tongyi){
+      const m = c.image.tongyi.model, sz = c.image.tongyi.size;
+      if(m && [...$('a_model').options].some(o=>o.value===m)) $('a_model').value = m;
+      if(sz && [...$('a_size').options].some(o=>o.value===sz)) $('a_size').value = sz;
+    }
+  }catch(e){}
+}
+window.addEventListener('load', async ()=>{ await loadVoices(); await loadCfg(); loadKeyStatus(); });
+
+function toggleImg(){
+  const v = document.querySelector('input[name=imgsrc]:checked').value;
+  $('imgDirBox').style.display = v === 'local' ? 'block' : 'none';
+}
+
+async function post(url, data){
+  const r = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'},
+                             body: JSON.stringify(data||{})});
+  return r.json();
+}
+
+async function pickScript(){
+  const el = $('scriptInfo');
+  el.className='hint'; el.textContent='正在打开选择框…';
+  const r = await post('/api/pick', {kind:'file'});
+  if(!r.ok){ el.className='hint'; el.textContent = r.msg; return; }
+  $('script').value = r.path;
+  checkScript();
+}
+
+async function pickImages(){
+  const el = $('imgInfo');
+  el.className='hint'; el.textContent='正在打开选择框…';
+  const r = await post('/api/pick', {kind:'dir'});
+  if(!r.ok){ el.className='hint'; el.textContent = r.msg; return; }
+  $('imgdir').value = r.path;
+  checkImages();
+}
+
+async function checkScript(){
+  const p = $('script').value.trim();
+  if(!p){ return; }
+  const r = await post('/api/check-script', {path:p});
+  const el = $('scriptInfo');
+  if(!r.ok){ el.className='hint err'; el.textContent = '✗ ' + r.msg; return; }
+  let msg = `✓ ${r.chars} 字`;
+  let cls = 'hint ok';
+  if(r.has_subheading){ msg += ' ⚠ 正文里有「一、二、」小标题,会被念出来'; cls='hint warn'; }
+  msg += ` · 开头：${r.preview}…`;
+  el.className = cls; el.textContent = msg;
+
+  // 自动填（已填过的不覆盖）
+  if(r.guess_episode && !$('episode').dataset.touched) $('episode').value = r.guess_episode;
+  if(r.guess_title   && !$('title').dataset.touched)   $('title').value   = r.guess_title;
+  if(r.guess_name    && !$('name').dataset.touched)    $('name').value    = r.guess_name;
+  if(r.guess_title || r.guess_name){
+    const f = $('autoFill');
+    if(f){ f.textContent = '已根据稿子标题自动填写，可手改'; setTimeout(()=>f.textContent='', 4000); }
+  }
+}
+
+async function checkImages(){
+  const d = $('imgdir').value.trim();
+  const r = await post('/api/check-images', {dir:d});
+  const el = $('imgInfo');
+  if(!r.ok){ el.className='hint err'; el.textContent='✗ '+r.msg; return; }
+  el.className='hint ok'; el.textContent = `✓ 找到 ${r.count} 张图片`;
+}
+
+async function loadVoices(){
+  try{
+    const r = await (await fetch('/api/voices')).json();
+    const sel = $('a_voice');
+    const cur = sel.value;
+    sel.innerHTML = '';
+    (r.voices||[]).forEach(v=>{
+      const o = document.createElement('option');
+      o.value = v.name; o.textContent = v.label || v.name;
+      sel.appendChild(o);
+    });
+    if([...sel.options].some(o=>o.value===cur)) sel.value = cur;
+  }catch(e){}
+}
+
+async function loadKeyStatus(){
+  try{
+    const r = await (await fetch('/api/key-status')).json();
+    const el = $('keyStatus');
+    if(r.configured){ el.className='hint ok'; el.textContent = '✓ 已配置：' + r.masked + '（留空则不改）'; }
+    else { el.className='hint warn'; el.textContent = '⚠ 未配置，生图会失败'; }
+  }catch(e){}
+}
+
+async function saveKey(){
+  const k = $('a_key').value.trim();
+  if(!k){ alert('请先粘贴密钥'); return; }
+  const r = await post('/api/save-key', {key:k});
+  const el = $('keyStatus');
+  if(r.ok){ el.className='hint ok'; el.textContent='✓ 已保存：' + r.masked; $('a_key').value=''; }
+  else { el.className='hint err'; el.textContent='✗ ' + r.msg; }
+}
+
+async function pickRoot(){
+  const r = await post('/api/pick', {kind:'dir'});
+  if(r.ok){ $('a_root').value = r.path; }
+}
+
+async function saveAdv(){
+  await post('/api/save-config', {advanced:{
+    title_duration: +$('a_dur').value, margin_bottom: +$('a_margin').value,
+    font_size: +$('a_font').value, crf: +$('a_crf').value,
+    voice: $('a_voice').value, rate: $('a_rate').value,
+    library_root: $('a_root').value,
+    img_model: $('a_model').value,
+    img_size: $('a_size').value,
+  }});
+  $('advMsg').textContent = '已保存';
+  setTimeout(()=>$('advMsg').textContent='', 2000);
+}
+
+async function start(){
+  const params = {
+    episode: $('episode').value.trim(),
+    script_path: $('script').value.trim(),
+    title: $('title').value.trim(),
+    name: $('name').value.trim(),
+  };
+  if(document.querySelector('input[name=imgsrc]:checked').value === 'local'){
+    params.images_dir = $('imgdir').value.trim();
+  }
+  if(!params.episode || !params.script_path){
+    alert('请填期号和稿子路径'); return;
+  }
+  await saveAdv();
+  const r = await post('/api/start', params);
+  if(!r.ok){ alert(r.msg); return; }
+  $('startBtn').disabled = true;
+  $('progressCard').style.display = 'block';
+  poll();
+}
+
+async function poll(){
+  const r = await (await fetch('/api/status')).json();
+  $('stepText').textContent = r.step || '运行中…';
+  $('bar').style.width = (r.progress||0) + '%';
+  const box = $('logs');
+  box.textContent = (r.logs||[]).join('\n');
+  box.scrollTop = box.scrollHeight;
+
+  if(r.done){
+    $('startBtn').disabled = false;
+    if(r.error){
+      $('stepText').innerHTML = '<span class="err">✗ 出错</span>';
+      $('doneBox').innerHTML = '<div class="hint err">'+r.error+'</div>';
+    }else{
+      $('stepText').innerHTML = '<span class="ok">✓ 完成</span>';
+      $('doneBox').innerHTML =
+        '<button class="ghost" onclick="openDir(\''+r.result_dir+'\')">打开成片目录</button>'
+        + '<div class="hint" style="margin-top:10px">请人工确认：①拖到片尾,字幕和声音对得上 ②传手机用抖音预览,字幕没被挡</div>';
+    }
+    return;
+  }
+  setTimeout(poll, 1200);
+}
+
+async function openDir(d){ await post('/api/open-folder', {dir:d}); }
+</script>
+</body>
+</html>
