@@ -33,6 +33,8 @@ TASK = {
     "done": False,
     "error": None,
     "result_dir": "",
+    "proc": None,
+    "stopped": False,
 }
 LOG_LOCK = threading.Lock()
 
@@ -122,9 +124,12 @@ def guess_fields(title_line: str) -> dict:
     例：'上下五千年 第14期 清朝·康乾盛世'
         → episode=014, title='清朝·康乾盛世', name='14-清朝'
     """
-    out = {"guess_episode": "", "guess_title": "", "guess_name": ""}
+    out = {"guess_episode": "", "guess_title": "", "guess_name": "", "guess_series": ""}
     if not title_line:
         return out
+    ms = re.match(r"^([\u4e00-\u9fff]{2,8})\s*第", title_line)
+    if ms:
+        out["guess_series"] = ms.group(1)
 
     # 期号：第14期 / 第 14 期 / 第十四期
     num = None
@@ -188,7 +193,7 @@ def read_script(path):
 def run_pipeline(params):
     """后台线程跑流水线"""
     TASK.update({"running": True, "logs": [], "step": "准备中",
-                 "progress": 1, "done": False, "error": None})
+                 "progress": 1, "done": False, "error": None, "stopped": False})
     try:
         episode = params["episode"]
         ep_dir = BASE_DIR / "episodes" / episode
@@ -215,9 +220,15 @@ def run_pipeline(params):
                     n += 1
             log(f"✓ 本地图片：{n} 张")
             cmd.append("--skip-images")
+            if params.get("shuffle_images"):
+                cmd.append("--shuffle-images")
 
         if params.get("title"):
             cmd += ["--title", params["title"]]
+        if params.get("series"):
+            cmd += ["--series", params["series"]]
+        if params.get("title_bg"):
+            cmd += ["--title-bg", params["title_bg"]]
         if params.get("name"):
             cmd += ["--name", params["name"]]
 
@@ -226,13 +237,19 @@ def run_pipeline(params):
         proc = subprocess.Popen(
             cmd, cwd=str(BASE_DIR), stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, text=True, bufsize=1,
+            start_new_session=True,   # 独立进程组，便于整组终止
         )
+        TASK["proc"] = proc
         for line in proc.stdout:
             line = line.rstrip()
             if line:
                 log(line)
         proc.wait()
 
+        if TASK.get("stopped"):
+            log("⏹ 已手动停止")
+            TASK["step"] = "已停止"
+            return
         if proc.returncode != 0:
             raise RuntimeError(f"流水线退出码 {proc.returncode}")
 
@@ -246,6 +263,7 @@ def run_pipeline(params):
     finally:
         TASK["running"] = False
         TASK["done"] = True
+        TASK["proc"] = None
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -354,6 +372,35 @@ class Handler(BaseHTTPRequestHandler):
                      if f.lower().endswith((".jpg", ".jpeg", ".png", ".webp"))])
             return self._json({"ok": True, "count": n})
 
+        if u.path == "/api/stop":
+            proc = TASK.get("proc")
+            if not TASK["running"] or proc is None:
+                return self._json({"ok": False, "msg": "当前没有正在运行的任务"})
+            TASK["stopped"] = True
+            try:
+                import os as _os, signal as _sig
+                # 终止整个进程组(含 ffmpeg 子进程)
+                try:
+                    _os.killpg(_os.getpgid(proc.pid), _sig.SIGTERM)
+                except Exception:
+                    proc.terminate()
+                # 宽限后强杀
+                import time as _t
+                for _ in range(20):
+                    if proc.poll() is not None:
+                        break
+                    _t.sleep(0.1)
+                if proc.poll() is None:
+                    try:
+                        _os.killpg(_os.getpgid(proc.pid), _sig.SIGKILL)
+                    except Exception:
+                        proc.kill()
+                # 兜底：清理可能残留的 ffmpeg
+                subprocess.run(["pkill", "-9", "-f", "ffmpeg"], capture_output=True)
+            except Exception as e:
+                return self._json({"ok": False, "msg": f"停止失败：{e}"})
+            return self._json({"ok": True})
+
         if u.path == "/api/start":
             if TASK["running"]:
                 return self._json({"ok": False, "msg": "已有任务在跑"})
@@ -377,6 +424,8 @@ class Handler(BaseHTTPRequestHandler):
                 cfg.setdefault("tts", {})["rate"] = adv["rate"]
             if "library_root" in adv:
                 cfg.setdefault("output", {})["library_root"] = adv["library_root"]
+            if "series_name" in adv:
+                cfg.setdefault("title_card", {})["series_name"] = adv["series_name"]
             if "img_model" in adv and adv["img_model"]:
                 cfg.setdefault("image", {}).setdefault("tongyi", {})["model"] = adv["img_model"]
             if "img_size" in adv and adv["img_size"]:

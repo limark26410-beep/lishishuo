@@ -96,8 +96,12 @@ def build_ken_burns_clip(
     z_end = zoom_end
     z_step = (z_end - z_start) / frames if frames > 0 else 0
 
+    # 智能适配任意尺寸/比例的图片（含用户自拍的横图、方图）：
+    #   scale=...:force_original_aspect_ratio=increase 按比例放大到刚好填满
+    #   crop 居中裁掉多余部分 —— 不变形、不留黑边
     vf = (
-        f"scale={scale_w}:{scale_h},"
+        f"scale={scale_w}:{scale_h}:force_original_aspect_ratio=increase,"
+        f"crop={scale_w}:{scale_h},"
         f"zoompan=z='{z_start}+(on-1)*{z_step}':"
         f"d={frames}:"
         f"x='iw/2-(iw/zoom/2)':"

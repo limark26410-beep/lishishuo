@@ -2,7 +2,7 @@ pipeline:
   name: 历史长音频流水线
   version: 1.0.0
 output:
-  library_root: /Users/local/Desktop/测试/
+  library_root: /Users/local/Desktop/历史说素材/决战五千年/
   dirs:
     video: 成片
     images: 图片
@@ -24,7 +24,7 @@ image:
   style_anchor: 中国古风，水墨质感，纪录片氛围，无文字，场景宏大，写意风格
   tongyi:
     api_base: https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis
-    model: wanx-v1
+    model: wanx2.1-t2i-turbo
     size: 1080*1440
     batch_size: 3
     max_retries: 3
@@ -77,6 +77,7 @@ title_card:
   gold_line_gap: 18
   gold_line_width: 400
   gold_line_height: 3
+  series_name: 上下五千年
 bgm:
   enabled: true
   path: assets/bgm.mp3

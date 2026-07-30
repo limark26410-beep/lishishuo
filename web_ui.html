@@ -112,6 +112,10 @@
           <button class="ghost" onclick="pickImages()">选择目录</button>
         </div>
         <div class="hint" id="imgInfo"></div>
+        <label style="display:block;margin-top:8px">
+          <input type="checkbox" id="shuffleImg" checked>
+          每期打乱图片顺序（多期共用一个文件夹时，避免每期画面重复）
+        </label>
       </div>
     </div>
 
@@ -121,6 +125,22 @@
       <label>片头标题</label>
       <input type="text" id="title" placeholder="选稿子后自动填" oninput="this.dataset.touched=1">
       <div class="hint" id="autoFill">用 · 分隔主副标题,如「唐朝·盛世气象」</div>
+    </div>
+
+    <div class="row">
+      <label>系列名</label>
+      <input type="text" id="series" placeholder="留空=自动读取稿子标题" oninput="this.dataset.touched=1">
+      <div class="hint">片头那行小字。留空则自动读稿子首词(如「决战五千年」)。填了以此为准</div>
+    </div>
+
+    <div class="row">
+      <label>片头背景图</label>
+      <div class="flex">
+        <input type="text" id="titlebg" placeholder="留空=纯黑底">
+        <button class="ghost" onclick="pickTitleBg()">选择图片</button>
+        <button class="ghost" onclick="clearTitleBg()">清除</button>
+      </div>
+      <div class="hint">选一张鲜艳的图当片头背景,文字会自动加压暗条和描边保证清晰。留空则黑底</div>
     </div>
 
     <div class="row">
@@ -151,7 +171,7 @@
 
       <div class="adv">
         <div><label>片头时长(秒)</label><input type="number" id="a_dur" value="3"></div>
-        <div><label>字幕底边距(px)</label><input type="number" id="a_margin" value="1000"></div>
+        <div><label>字幕底边距(px)</label><input type="number" id="a_margin" value="400"></div>
         <div><label>字幕字号</label><input type="number" id="a_font" value="60"></div>
         <div><label>编码质量 CRF</label><input type="number" id="a_crf" value="26"></div>
         <div><label>TTS 声线</label>
@@ -186,6 +206,7 @@
 
     <div class="divider"></div>
     <button id="startBtn" onclick="start()">开始制作</button>
+    <button id="stopBtn" onclick="stopTask()" style="display:none;background:#c0392b;color:#fff;margin-left:10px">停止</button>
   </div>
 
   <div class="card" id="progressCard" style="display:none">
@@ -264,6 +285,7 @@ async function checkScript(){
   if(r.guess_episode && !$('episode').dataset.touched) $('episode').value = r.guess_episode;
   if(r.guess_title   && !$('title').dataset.touched)   $('title').value   = r.guess_title;
   if(r.guess_name    && !$('name').dataset.touched)    $('name').value    = r.guess_name;
+  if(r.guess_series && !$('series').dataset.touched) $('series').value = r.guess_series;
   if(r.guess_title || r.guess_name){
     const f = $('autoFill');
     if(f){ f.textContent = '已根据稿子标题自动填写，可手改'; setTimeout(()=>f.textContent='', 4000); }
@@ -311,6 +333,12 @@ async function saveKey(){
   else { el.className='hint err'; el.textContent='✗ ' + r.msg; }
 }
 
+async function pickTitleBg(){
+  const r = await post('/api/pick', {kind:'file'});
+  if(r.ok){ $('titlebg').value = r.path; }
+}
+function clearTitleBg(){ $('titlebg').value = ''; }
+
 async function pickRoot(){
   const r = await post('/api/pick', {kind:'dir'});
   if(r.ok){ $('a_root').value = r.path; }
@@ -335,9 +363,12 @@ async function start(){
     script_path: $('script').value.trim(),
     title: $('title').value.trim(),
     name: $('name').value.trim(),
+    series: $('series').value.trim(),
+    title_bg: $('titlebg').value.trim(),
   };
   if(document.querySelector('input[name=imgsrc]:checked').value === 'local'){
     params.images_dir = $('imgdir').value.trim();
+    params.shuffle_images = $('shuffleImg').checked;
   }
   if(!params.episode || !params.script_path){
     alert('请填期号和稿子路径'); return;
@@ -346,6 +377,7 @@ async function start(){
   const r = await post('/api/start', params);
   if(!r.ok){ alert(r.msg); return; }
   $('startBtn').disabled = true;
+  $('stopBtn').style.display = 'inline-block';
   $('progressCard').style.display = 'block';
   poll();
 }
@@ -360,6 +392,7 @@ async function poll(){
 
   if(r.done){
     $('startBtn').disabled = false;
+    $('stopBtn').style.display = 'none';
     if(r.error){
       $('stepText').innerHTML = '<span class="err">✗ 出错</span>';
       $('doneBox').innerHTML = '<div class="hint err">'+r.error+'</div>';
@@ -372,6 +405,14 @@ async function poll(){
     return;
   }
   setTimeout(poll, 1200);
+}
+
+async function stopTask(){
+  if(!confirm('确定停止当前制作任务？已生成的中间文件会保留。')) return;
+  $('stopBtn').disabled = true;
+  const r = await post('/api/stop', {});
+  if(!r.ok){ alert(r.msg || '停止失败'); $('stopBtn').disabled = false; return; }
+  $('stepText').innerHTML = '<span class="warn">⏹ 正在停止…</span>';
 }
 
 async function openDir(d){ await post('/api/open-folder', {dir:d}); }

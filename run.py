@@ -357,10 +357,14 @@ def main():
     )
     parser.add_argument("--skip-tts", action="store_true", help="跳过 TTS")
     parser.add_argument("--skip-images", action="store_true", help="跳过生图")
+    parser.add_argument("--shuffle-images", action="store_true",
+                        help="本地图片按本期随机打乱顺序（每期画面不同）")
     parser.add_argument("--no-cleanup", action="store_true", help="不清理临时文件")
     parser.add_argument("--dry-run", action="store_true", help="仅检查素材")
     # ── 新增 ──
     parser.add_argument("--title", help="片头主标题，如 '唐朝·盛世气象'（用·分隔主副标题）")
+    parser.add_argument("--series", help="系列名，如 '决战五千年'（缺省则从稿子标题自动读取）")
+    parser.add_argument("--title-bg", help="片头背景图路径（缺省用纯黑底）")
     parser.add_argument("--name", help="归档名，如 '16-唐朝'（缺省用期号）")
     parser.add_argument("--images-dir", help="本地图片目录（指定则不生图）")
     parser.add_argument("--no-archive", action="store_true", help="不归档到素材库")
@@ -427,6 +431,12 @@ def main():
                     if f.lower().endswith((".jpg", ".png", ".jpeg"))
                 ])
                 if existing:
+                    # 图片顺序：默认按文件名；--shuffle-images 则按期号随机打乱
+                    if getattr(args, "shuffle_images", False):
+                        import random as _rd
+                        seed = getattr(args, "name", None) or args.episode
+                        _rd.Random(str(seed)).shuffle(existing)
+                        print(f"  🔀 图片已按本期随机打乱: {len(existing)} 张")
                     print(f"  ⏩ 使用已有图片: {len(existing)} 张")
                     return {"image_map": {i: p for i, p in enumerate(existing)},
                             "prompts_meta": []}
@@ -455,16 +465,53 @@ def main():
 
     tts_result, img_result = tts_result[0], img_result[0]
 
+    # 片头标题：优先命令行 --title，缺省则从稿子标题自动提取
+    _title = args.title
+    if not _title:
+        try:
+            _hdr = open(os.path.join(episode_dir, "script.txt"),
+                        encoding="utf-8").readline().strip()
+        except Exception:
+            _hdr = ""
+        # 形如"决战五千年 第4期 桂陵·马陵之战·孙庞斗智" → 取"第X期"之后的部分作标题
+        import re as _re2
+        m2 = _re2.match(r"^[\u4e00-\u9fff]{2,8}\s*第\s*\d+\s*期\s*(.+)$", _hdr)
+        if m2:
+            _title = m2.group(1).strip()
+            print(f"  (片头标题自动取自稿子: {_title})")
+
     # 生成片头卡
-    if args.title:
+    if _title:
         print(f"\n{'='*60}")
         print("STEP 2.5: 生成片头")
         print(f"{'='*60}")
         gen_title.configure(cfg)
-        parts = [x.strip() for x in args.title.split("·") if x.strip()]
-        series = f"上下五千年 · 第{int(args.episode)}期"
+        parts = [x.strip() for x in _title.split("·") if x.strip()]
+        # 系列名：优先命令行 --series，其次稿子标题首词，再次配置，最后兜底
+        series_name = getattr(args, "series", None)
+        if not series_name:
+            # 从稿子标题第一行取系列名（如"决战五千年 第1期 涿鹿之战..."→"决战五千年"）
+            try:
+                _first = open(os.path.join(episode_dir, "script.txt"),
+                              encoding="utf-8").readline().strip()
+            except Exception:
+                _first = ""
+            import re as _re
+            m = _re.match(r"^([\u4e00-\u9fff]{2,8})\s*第", _first)
+            if m:
+                series_name = m.group(1)
+        if not series_name:
+            series_name = cfg.get("title_card", {}).get("series_name", "上下五千年")
+        series = f"{series_name} · 第{int(args.episode)}期"
         try:
-            gen_title.render(parts, series, episode_dir)
+            _bg = getattr(args, "title_bg", None)
+            if _bg and os.path.exists(_bg):
+                print(f"  片头背景图: {_bg}")
+            elif _bg:
+                print(f"  ⚠ 片头背景图路径不存在: {_bg}，改用黑底")
+            else:
+                print(f"  片头: 纯黑底（未指定背景图）")
+            gen_title.render(parts, series, episode_dir, bg_image=_bg)
             print(f"  ✓ 片头卡已生成 ({cfg.get('title_card',{}).get('duration',3)}秒)")
         except Exception as e:
             print(f"  ⚠ 片头生成失败: {e}")

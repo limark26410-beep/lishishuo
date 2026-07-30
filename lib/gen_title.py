@@ -55,12 +55,14 @@ WHITE_RGBA = (232, 232, 224, 255)
 BG_RGBA = (10, 5, 3, 255)
 
 
-def render(main_texts, series_text, out_dir):
+def render(main_texts, series_text, out_dir, bg_image=None):
     """
     main_texts: list[str] - 1-2 main title lines
       e.g. ["两晋南北朝", "乱世与融合"]
     series_text: str - series line
       e.g. "上下五千年 · 第七期"
+    bg_image: str | None - 片头背景图路径。传了就用"图片+压暗文字条+文字"，
+              不传就用纯黑底。
     """
     os.makedirs(out_dir, exist_ok=True)
     clip_path = os.path.join(out_dir, "title_clip.mp4")
@@ -85,15 +87,31 @@ def render(main_texts, series_text, out_dir):
     series_y = block_top + MAIN_FS * n_main + LINE_GAP * (n_main - 1) + SERIES_GAP
     gl_y = series_y + SERIES_FS + GLINE_GAP
 
+    # 文字块的上下范围（用于局部压暗，让文字在鲜艳背景上也清晰）
+    band_top = max(0, block_top - 40)
+    band_bot = min(H, gl_y + GL_H + 40)
+    band_h = band_bot - band_top
+
     # FFmpeg filter_complex
     label = "bg"
-    parts = [f"color=c={BG}:s={W}x{H}:d={DUR}:r={FPS}[{label}]"]
+    use_bg = bool(bg_image and os.path.exists(bg_image))
+    if use_bg:
+        # 背景图作为 -i 输入(input 0)：缩放填满不变形 + 文字区域压暗条
+        parts = [
+            f"[0:v]scale={W}:{H}:force_original_aspect_ratio=increase,"
+            f"crop={W}:{H},setsar=1,"
+            f"drawbox=x=0:y={band_top}:w={W}:h={band_h}:"
+            f"color=black@0.45:t=fill[{label}]"
+        ]
+    else:
+        parts = [f"color=c={BG}:s={W}x{H}:d={DUR}:r={FPS}[{label}]"]
 
     for i, (text, y_top) in enumerate(zip(main_texts, main_ys)):
         new_label = f"t{i}"
         parts.append(
             f"[{label}]drawtext=text='{text}':fontfile={FONT}:"
             f"fontsize={MAIN_FS}:fontcolor={GOLD}:"
+            f"borderw=3:bordercolor=black@0.8:"
             f"x=(w-text_w)/2:y={y_top}[{new_label}]"
         )
         label = new_label
@@ -103,6 +121,7 @@ def render(main_texts, series_text, out_dir):
     parts.append(
         f"[{label}]drawtext=text='{series_text}':fontfile={FONT}:"
         f"fontsize={SERIES_FS}:fontcolor={WHITE}:"
+        f"borderw=2:bordercolor=black@0.8:"
         f"x=(w-text_w)/2:y={series_y}[{ser_label}]"
     )
     label = ser_label
@@ -114,16 +133,43 @@ def render(main_texts, series_text, out_dir):
     )
 
     fc = ";".join(parts)
-    cmd = ["ffmpeg", "-y", "-filter_complex", fc, "-map", "[vout]",
-           "-c:v", "h264_videotoolbox", "-b:v", "3000k",
-           "-pix_fmt", "yuv420p", "-t", str(DUR), clip_path]
+    cmd = ["ffmpeg", "-y"]
+    if use_bg:
+        cmd += ["-loop", "1", "-t", str(DUR), "-i", bg_image]
+    cmd += ["-filter_complex", fc, "-map", "[vout]",
+            "-c:v", "h264_videotoolbox", "-b:v", "3000k",
+            "-pix_fmt", "yuv420p", "-t", str(DUR), clip_path]
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode:
-        print("FFmpeg failed:", r.stderr[:800], file=sys.stderr)
-        return None, None
+        # videotoolbox 失败时回退 libx264（不改黑底，只换编码器）
+        cmd2 = ["ffmpeg", "-y"]
+        if use_bg:
+            cmd2 += ["-loop", "1", "-t", str(DUR), "-i", bg_image]
+        cmd2 += ["-filter_complex", fc, "-map", "[vout]",
+                 "-c:v", "libx264", "-crf", "20",
+                 "-pix_fmt", "yuv420p", "-t", str(DUR), clip_path]
+        r = subprocess.run(cmd2, capture_output=True, text=True)
+        if r.returncode:
+            print("FFmpeg failed:", r.stderr[:1000], file=sys.stderr)
+            return None, None
 
-    # PNG card (preview)
-    img = Image.new("RGBA", (W, H), BG_RGBA)
+    # PNG card (preview) —— 有背景图就铺上去
+    if use_bg:
+        try:
+            bg = Image.open(bg_image).convert("RGBA")
+            # 缩放填满 + 居中裁剪
+            scale = max(W / bg.width, H / bg.height)
+            bg = bg.resize((int(bg.width*scale)+1, int(bg.height*scale)+1))
+            left = (bg.width - W)//2; top = (bg.height - H)//2
+            bg = bg.crop((left, top, left+W, top+H))
+            img = bg
+            # 文字区域压暗条
+            band = Image.new("RGBA", (W, band_h), (0,0,0,115))
+            img.paste(band, (0, band_top), band)
+        except Exception:
+            img = Image.new("RGBA", (W, H), BG_RGBA)
+    else:
+        img = Image.new("RGBA", (W, H), BG_RGBA)
     draw = ImageDraw.Draw(img)
 
     for text, y_top in zip(main_texts, main_ys):
