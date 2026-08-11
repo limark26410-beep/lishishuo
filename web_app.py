@@ -445,17 +445,17 @@ class Handler(BaseHTTPRequestHandler):
                 duration_min = max(1, min(30, int(data.get("duration_min") or 3)))
             except (TypeError, ValueError):
                 duration_min = 3
-            # 读 .env 拿 DASHSCOPE_API_KEY
+            # 读 .env 拿 DEEPSEEK_API_KEY
             env_path = BASE_DIR / ".env"
             api_key = ""
             if env_path.exists():
                 for ln in env_path.read_text(encoding="utf-8").splitlines():
-                    if ln.strip().startswith("DASHSCOPE_API_KEY"):
+                    if ln.strip().startswith("DEEPSEEK_API_KEY"):
                         api_key = ln.split("=", 1)[-1].strip()
                         break
             if not api_key:
                 return self._json({"ok": False,
-                                   "msg": "未配置 DASHSCOPE_API_KEY，请到高级设置里填生图密钥"})
+                                   "msg": "未配置 DEEPSEEK_API_KEY，请到高级设置里填写"})
             cfg = load_cfg()
             try:
                 result = generate_script(
@@ -534,18 +534,30 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": True})
 
         if u.path == "/api/save-key":
-            """把 API Key 写入 .env（不进 config.yaml，避免随代码泄露）"""
+            """把 API Key 写入 .env（不进 config.yaml，避免随代码泄露）
+            key_type: dashscope（生图）| deepseek（写稿），默认 dashscope。
+            两个 key 并存，互不影响。"""
             key = (data.get("key") or "").strip()
+            key_type = (data.get("key_type") or "dashscope").strip()
             if not key:
                 return self._json({"ok": False, "msg": "密钥为空"})
             if len(key) < 10:
                 return self._json({"ok": False, "msg": "密钥格式不对"})
+            prefix_map = {
+                "dashscope": "DASHSCOPE_API_KEY",
+                "deepseek": "DEEPSEEK_API_KEY",
+            }
+            target_prefix = prefix_map.get(key_type, "DASHSCOPE_API_KEY")
             env_path = BASE_DIR / ".env"
             lines = []
             if env_path.exists():
-                lines = [ln for ln in env_path.read_text(encoding="utf-8").splitlines()
-                         if not ln.strip().startswith("DASHSCOPE_API_KEY")]
-            lines.append(f"DASHSCOPE_API_KEY={key}")
+                for ln in env_path.read_text(encoding="utf-8").splitlines():
+                    stripped = ln.strip()
+                    # 跳过当前 key_type 的旧行（下面重新追加），保留另一种 key
+                    if stripped.startswith(target_prefix):
+                        continue
+                    lines.append(ln)
+            lines.append(f"{target_prefix}={key}")
             env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
             try:
                 os.chmod(env_path, 0o600)

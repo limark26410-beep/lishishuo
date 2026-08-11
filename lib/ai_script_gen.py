@@ -1,6 +1,6 @@
 """
 AI 智能出稿模块
-封装通义千问（qwen-max）API 调用：输入自然语言指令 → 输出结构化稿件。
+封装 DeepSeek（deepseek-v4-pro）API 调用：输入自然语言指令 → 输出结构化稿件。
 
 兼容 lishishuo 1.0 流水线：
 - script.txt: hook + 正文（不含标题行；标题走 run.py --title 参数，
@@ -15,8 +15,8 @@ import time
 
 import requests
 
-API_ENDPOINT = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
-MODEL = "qwen-max"
+API_ENDPOINT = "https://api.deepseek.com/chat/completions"
+MODEL = "deepseek-v4-pro"
 TIMEOUT = 60          # 秒
 MAX_RETRIES = 2       # 最多重试 2 次（首次 + 2 次重试）
 
@@ -35,14 +35,15 @@ def _build_messages(instruction, duration_min, image_count, series_name, style_a
     if style_anchor:
         anchor_line = f'8. 生图提示词需额外融入风格描述：「{style_anchor}」。\n'
     system = f"""你是一位专业的文史类短视频文案创作者，专为抖音/视频号平台撰写口播稿。
-你的文案风格：口语化、有故事感、有感染力、三秒钩子抓住观众。
 
-输出规则：
-1. 稿子结构：钩子（1-2句，必须放在最开头，制造悬念或情感冲击）→ 正文（分段叙述）→ 收尾金句（1句）
-2. 语速基准：中文约250字/分钟。本次目标时长 {duration_min} 分钟，正文输出约 {duration_min * 250} 字。
+你的文案风格：口语化、有故事感、有感染力、三秒钩子抓住观众。像一位纪录片导演在镜头前娓娓道来，而不是在念百科条目。
+
+硬性规则：
+1. 稿子结构：钩子（1-2句，制造悬念或情感冲击）→ 正文（自然段落，每段讲一个情节，段与段之间用过渡句衔接）→ 收尾（1句金句或下期预告）
+2. 语速基准：中文约250字/分钟。本次目标时长 {duration_min} 分钟，正文字数控制在 {duration_min * 250} 到 {duration_min * 300} 字之间（含标点）。宁多勿少，但超出上限会剪不完，必须控制。
 3. 史实准确：涉及人名、地名、年代、事件必须真实可查，不可虚构。
-4. 正文中可用"一、""二、"分段，但钩子那段不能带序号。
-5. 不要用"大家好""欢迎收看"之类的开场白，直接入戏。
+4. 严格禁止在正文中使用"一、""二、"等序号分段。用自然段落和过渡句替代，比如"故事，要从……说起""那么，为什么……""更令人震撼的是……"。
+5. 不要用"大家好""欢迎收看"之类的开场白，直接入戏。不要用"总结一下""综上所述"收尾。
 6. 同时生成 {image_count} 个生图提示词，每个是一句完整的中文描述，风格统一为"中国古风，水墨质感，纪录片氛围，无文字"。
 7. 系列名默认「{series_name}」，除非用户指令明确指定其他系列。
 {anchor_line}
@@ -51,7 +52,7 @@ def _build_messages(instruction, duration_min, image_count, series_name, style_a
 {{
  "episode_title": "用作片头主标题的短句，用·分隔主副标题，如'李白·诗仙传奇'",
  "hook": "开头钩子，1-2句",
- "script_body": "正文全部内容，分段分行，含收尾金句",
+ "script_body": "正文全部内容，自然段落分行，含收尾",
  "image_prompts": ["提示词1", "提示词2", ...],
  "series_name": "系列名",
  "episode_name": "归档名建议，如'17-李白'"
@@ -68,6 +69,7 @@ def _call_qwen(system, user, api_key):
             {"role": "user", "content": user},
         ],
         "temperature": 0.7,
+        "max_tokens": 4096,
     }
     last_err = None
     for attempt in range(1, MAX_RETRIES + 2):
@@ -108,7 +110,7 @@ def generate_script(instruction, duration_min=3, api_key="",
     参数:
         instruction: 用户输入，如"出一个关于李白的故事"
         duration_min: 目标时长（分钟），默认 3
-        api_key: DashScope API Key
+        api_key: DeepSeek API Key
         series_name: 系列名，默认"上下五千年"
         style_anchor: 生图风格锚定词（可空）
 
@@ -128,7 +130,7 @@ def generate_script(instruction, duration_min=3, api_key="",
         AIScriptError
     """
     if not api_key:
-        raise AIScriptError("未配置 DASHSCOPE_API_KEY，请到高级设置里填写")
+        raise AIScriptError("未配置 DEEPSEEK_API_KEY，请到高级设置里填写")
 
     # 每 18 秒一张图（含 Ken Burns 动效），最少 6 张
     image_count = max(6, (duration_min * 60) // 18)
