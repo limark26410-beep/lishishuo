@@ -334,7 +334,7 @@ async function saveKey(){
 }
 
 async function pickTitleBg(){
-  const r = await post('/api/pick', {kind:'file'});
+  const r = await post('/api/pick', {kind:'file', types:['jpg','jpeg','png','webp','gif','bmp']});
   if(r.ok){ $('titlebg').value = r.path; }
 }
 function clearTitleBg(){ $('titlebg').value = ''; }

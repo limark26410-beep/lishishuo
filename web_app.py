@@ -456,13 +456,19 @@ class Handler(BaseHTTPRequestHandler):
         if u.path == "/api/pick":
             """调用系统原生选择框，拿到真实路径"""
             kind = data.get("kind", "file")   # file | dir
+            # 文件类型：稿子选 docx/txt/md，背景图选图片格式
+            ftypes = data.get("types", None)
             try:
                 if sys.platform == "darwin":
                     if kind == "dir":
                         script = 'POSIX path of (choose folder with prompt "选择图片目录")'
                     else:
-                        script = ('POSIX path of (choose file with prompt "选择稿子" '
-                                  'of type {"docx","txt","md"})')
+                        if ftypes:
+                            type_str = ",".join(f'"{t}"' for t in ftypes)
+                        else:
+                            type_str = '"docx","txt","md"'
+                        script = (f'POSIX path of (choose file with prompt "选择文件" '
+                                  f'of type {{{type_str}}})')
                     r = subprocess.run(["osascript", "-e", script],
                                        capture_output=True, text=True, timeout=180)
                     path = r.stdout.strip()
