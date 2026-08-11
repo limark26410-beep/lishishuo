@@ -260,10 +260,10 @@
         <div class="hint" id="aiPreviewMeta"></div>
       </div>
       <div style="margin-top:10px; padding:10px; background:#100d09; border-radius:6px;
-        font-size:13px; color:#9c9384; max-height:160px; overflow-y:auto;
+        font-size:13px; line-height:1.8; color:#9c9384; max-height:420px; overflow-y:auto;
         white-space:pre-wrap;" id="aiPreviewText"></div>
       <div style="margin-top:12px; display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-        <button onclick="aiConfirm()">✅ 确认，开始制作</button>
+        <button onclick="aiConfirm()">✅ 确认，填入手动模式</button>
         <button class="ghost" onclick="aiRegenerate()">🔄 重新生成</button>
         <button class="ghost" onclick="aiEditScript()">✏️ 手动修改稿子</button>
       </div>
@@ -427,9 +427,7 @@ async function saveAdv(){
   setTimeout(()=>$('advMsg').textContent='', 2000);
 }
 
-let aiEpisodeId = '';
-let aiEpisodeDir = '';
-let aiFullScript = '';
+let isAiMode = false; // AI 生成的稿子回填后，走 ai_mode 流水线
 
 function switchMode(mode){
   if(mode === 'ai'){
@@ -464,19 +462,20 @@ async function aiGenerate(){
     const r = await post('/api/ai-generate', {instruction, duration_min: duration});
     if(!r.ok){ $('aiGenHint').textContent = '❌ ' + r.msg; return; }
 
-    aiEpisodeId = r.episode_id;
-    aiEpisodeDir = r.episode_dir;
-    aiFullScript = r.script_preview || '';
+    // 存到变量，等用户点「确认」后再统一回填手动表单
+    window._aiData = {
+      episode_id: r.episode_id,
+      episode_dir: r.episode_dir,
+      script_path: r.script_path,
+      title: r.title,
+      episode_name: r.episode_name,
+      series_name: r.series_name,
+    };
     $('aiPreviewTitle').textContent = r.title || '稿子生成完毕';
     $('aiPreviewMeta').textContent = `${r.char_count} 字 · ${r.image_count} 张图 · 期号 ${r.episode_id}`;
     $('aiPreviewText').textContent = r.script_preview;
     $('aiPreview').style.display = 'block';
     $('aiGenHint').textContent = '✅ 请预览确认后再制作';
-    // 同步填到手动模式的表单字段（兼容现有 run_pipeline 参数）
-    $('episode').value = r.episode_id;
-    $('title').value = r.title || '';
-    $('name').value = r.episode_name || '';
-    $('series').value = r.series_name || '';
   } catch(e){
     $('aiGenHint').textContent = '❌ 网络错误，请重试';
   } finally {
@@ -489,35 +488,35 @@ async function aiRegenerate(){
 }
 
 async function aiEditScript(){
-  if(!aiEpisodeDir) return;
-  await openDir(aiEpisodeDir);
-  alert('已打开期号目录。请用文本编辑器修改 script.txt，改完回到本页点「确认，开始制作」');
+  const d = window._aiData;
+  if(!d || !d.episode_dir) return;
+  await openDir(d.episode_dir);
+  alert('已打开期号目录。请用文本编辑器修改 script.txt，改完回到本页点「确认，填入手动模式」');
 }
 
 async function aiConfirm(){
-  if(!aiEpisodeId){
-    alert('请先生成稿子'); return;
-  }
-  const params = {
-    episode: aiEpisodeId,
-    ai_mode: true,
-    title: $('title').value.trim(),
-    name: $('name').value.trim(),
-    series: $('series').value.trim(),
-    title_bg: $('titlebg').value.trim(),
-  };
-  if(document.querySelector('input[name=imgsrc]:checked').value === 'local'){
-    params.images_dir = $('imgdir').value.trim();
-    params.shuffle_images = $('shuffleImg').checked;
-  }
-  await saveAdv();
-  const r = await post('/api/ai-start', params);
-  if(!r.ok){ alert(r.msg); return; }
-  // 复用现有的进度展示逻辑
-  $('startBtn').disabled = true;
-  $('stopBtn').style.display = 'inline-block';
-  $('progressCard').style.display = 'block';
-  poll();
+  const d = window._aiData;
+  if(!d){ alert('请先生成稿子'); return; }
+
+  // 1. 回填 1.0 手动模式表单
+  $('episode').value = d.episode_id;
+  $('script').value = d.script_path || (d.episode_dir + '/script.txt');
+  $('title').value = d.title || '';
+  $('name').value = d.episode_name || '';
+  $('series').value = d.series_name || '';
+
+  // 标记已填过（防止后续自动覆盖）
+  $('episode').dataset.touched = '1';
+  $('title').dataset.touched = '1';
+  $('name').dataset.touched = '1';
+  $('series').dataset.touched = '1';
+
+  // 2. 切到手动模式，让用户调设置（声线/语速/片头背景图/图片来源等）
+  switchMode('manual');
+  isAiMode = true;
+
+  // 3. 滚动到顶部看填好的表单
+  window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 async function start(){
@@ -536,6 +535,8 @@ async function start(){
   if(!params.episode || !params.script_path){
     alert('请填期号和稿子路径'); return;
   }
+  // AI 模式标记（AI 生成的稿子回填后走 ai_mode 流水线）
+  if (isAiMode) { params.ai_mode = true; }
   await saveAdv();
   const r = await post('/api/start', params);
   if(!r.ok){ alert(r.msg); return; }
