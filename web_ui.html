@@ -84,7 +84,18 @@
   <h1>历史说 · 出片工具</h1>
   <div class="sub">稿子进，成片出</div>
 
-  <div class="card" id="form">
+  <div style="display:flex; gap:0; margin-bottom:20px; border-radius:8px; overflow:hidden; border:1px solid #342d24;">
+    <button id="modeManual" onclick="switchMode('manual')"
+      style="flex:1; padding:10px; border:none; background:#d4af37; color:#14100c; font-weight:600; cursor:pointer; font-size:14px;">
+      📄 手动模式
+    </button>
+    <button id="modeAI" onclick="switchMode('ai')"
+      style="flex:1; padding:10px; border:none; background:transparent; color:#a89e8c; cursor:pointer; font-size:14px;">
+      🤖 AI 智能出稿
+    </button>
+  </div>
+
+  <div class="card" id="manualCard">
     <div class="row">
       <label>期号</label>
       <input type="text" id="episode" placeholder="选稿子后自动填" oninput="this.dataset.touched=1">
@@ -207,6 +218,47 @@
     <div class="divider"></div>
     <button id="startBtn" onclick="start()">开始制作</button>
     <button id="stopBtn" onclick="stopTask()" style="display:none;background:#c0392b;color:#fff;margin-left:10px">停止</button>
+  </div>
+
+  <!-- 🤖 AI 智能出稿（默认隐藏） -->
+  <div class="card" id="aiCard" style="display:none;">
+    <div class="row">
+      <label>你想做什么内容？</label>
+      <textarea id="aiInstruction" rows="3"
+        style="width:100%; padding:12px; background:#100d09; border:1px solid #342d24;
+        border-radius:6px; color:#e8e4dc; font-size:15px; resize:vertical;
+        font-family:inherit; line-height:1.6;"
+        placeholder="比如：出一个关于李白的故事，3分钟即可。&#10;也可以写得更具体：讲武则天从才人到女皇的逆袭之路，5分钟，节奏要快"></textarea>
+    </div>
+    <div class="flex" style="gap:10px; align-items:center;">
+      <label style="margin:0;">时长：</label>
+      <select id="aiDuration" style="width:auto; flex:1;">
+        <option value="1">1 分钟（约250字）</option>
+        <option value="3" selected>3 分钟（约750字，推荐）</option>
+        <option value="5">5 分钟（约1250字）</option>
+        <option value="8">8 分钟（约2000字）</option>
+      </select>
+    </div>
+    <div style="margin-top:14px;">
+      <button id="aiGenBtn" onclick="aiGenerate()">🤖 生成稿子</button>
+      <span id="aiGenHint" class="hint" style="margin-left:10px;"></span>
+    </div>
+
+    <!-- 预览区（生成后显示） -->
+    <div id="aiPreview" style="display:none; margin-top:16px; padding:14px; background:#0f0c08; border:1px solid #342d24; border-radius:8px;">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <div class="step" id="aiPreviewTitle"></div>
+        <div class="hint" id="aiPreviewMeta"></div>
+      </div>
+      <div style="margin-top:10px; padding:10px; background:#100d09; border-radius:6px;
+        font-size:13px; color:#9c9384; max-height:160px; overflow-y:auto;
+        white-space:pre-wrap;" id="aiPreviewText"></div>
+      <div style="margin-top:12px; display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+        <button onclick="aiConfirm()">✅ 确认，开始制作</button>
+        <button class="ghost" onclick="aiRegenerate()">🔄 重新生成</button>
+        <button class="ghost" onclick="aiEditScript()">✏️ 手动修改稿子</button>
+      </div>
+    </div>
   </div>
 
   <div class="card" id="progressCard" style="display:none">
@@ -355,6 +407,99 @@ async function saveAdv(){
   }});
   $('advMsg').textContent = '已保存';
   setTimeout(()=>$('advMsg').textContent='', 2000);
+}
+
+let aiEpisodeId = '';
+let aiEpisodeDir = '';
+let aiFullScript = '';
+
+function switchMode(mode){
+  if(mode === 'ai'){
+    $('modeAI').style.background = '#d4af37';
+    $('modeAI').style.color = '#14100c';
+    $('modeManual').style.background = 'transparent';
+    $('modeManual').style.color = '#a89e8c';
+    $('manualCard').style.display = 'none';
+    $('aiCard').style.display = 'block';
+  } else {
+    $('modeManual').style.background = '#d4af37';
+    $('modeManual').style.color = '#14100c';
+    $('modeAI').style.background = 'transparent';
+    $('modeAI').style.color = '#a89e8c';
+    $('manualCard').style.display = 'block';
+    $('aiCard').style.display = 'none';
+  }
+}
+
+async function aiGenerate(){
+  const instruction = $('aiInstruction').value.trim();
+  const duration = parseInt($('aiDuration').value);
+  if(!instruction){
+    $('aiGenHint').textContent = '请先输入你想做的内容';
+    return;
+  }
+  $('aiGenBtn').disabled = true;
+  $('aiGenHint').textContent = '正在生成中，通常需要 10-30 秒…';
+  $('aiPreview').style.display = 'none';
+
+  try {
+    const r = await post('/api/ai-generate', {instruction, duration_min: duration});
+    if(!r.ok){ $('aiGenHint').textContent = '❌ ' + r.msg; return; }
+
+    aiEpisodeId = r.episode_id;
+    aiEpisodeDir = r.episode_dir;
+    aiFullScript = r.script_preview || '';
+    $('aiPreviewTitle').textContent = r.title || '稿子生成完毕';
+    $('aiPreviewMeta').textContent = `${r.char_count} 字 · ${r.image_count} 张图 · 期号 ${r.episode_id}`;
+    $('aiPreviewText').textContent = r.script_preview;
+    $('aiPreview').style.display = 'block';
+    $('aiGenHint').textContent = '✅ 请预览确认后再制作';
+    // 同步填到手动模式的表单字段（兼容现有 run_pipeline 参数）
+    $('episode').value = r.episode_id;
+    $('title').value = r.title || '';
+    $('name').value = r.episode_name || '';
+    $('series').value = r.series_name || '';
+  } catch(e){
+    $('aiGenHint').textContent = '❌ 网络错误，请重试';
+  } finally {
+    $('aiGenBtn').disabled = false;
+  }
+}
+
+async function aiRegenerate(){
+  await aiGenerate();
+}
+
+async function aiEditScript(){
+  if(!aiEpisodeDir) return;
+  await openDir(aiEpisodeDir);
+  alert('已打开期号目录。请用文本编辑器修改 script.txt，改完回到本页点「确认，开始制作」');
+}
+
+async function aiConfirm(){
+  if(!aiEpisodeId){
+    alert('请先生成稿子'); return;
+  }
+  const params = {
+    episode: aiEpisodeId,
+    ai_mode: true,
+    title: $('title').value.trim(),
+    name: $('name').value.trim(),
+    series: $('series').value.trim(),
+    title_bg: $('titlebg').value.trim(),
+  };
+  if(document.querySelector('input[name=imgsrc]:checked').value === 'local'){
+    params.images_dir = $('imgdir').value.trim();
+    params.shuffle_images = $('shuffleImg').checked;
+  }
+  await saveAdv();
+  const r = await post('/api/ai-start', params);
+  if(!r.ok){ alert(r.msg); return; }
+  // 复用现有的进度展示逻辑
+  $('startBtn').disabled = true;
+  $('stopBtn').style.display = 'inline-block';
+  $('progressCard').style.display = 'block';
+  poll();
 }
 
 async function start(){

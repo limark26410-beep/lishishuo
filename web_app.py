@@ -20,9 +20,26 @@ from urllib.parse import urlparse, parse_qs
 
 import yaml
 
+from lib.ai_script_gen import AIScriptError, generate_script
+
 BASE_DIR = Path(__file__).parent.resolve()
 CONFIG_PATH = BASE_DIR / "config.yaml"
 PORT = 8765
+
+# 加载 .env 到环境变量（不覆盖已存在的），供 run.py 子进程继承生图 key
+# 这样无论从终端还是双击启动，子进程都能拿到 DASHSCOPE_API_KEY
+try:
+    _env_path = BASE_DIR / ".env"
+    if _env_path.exists():
+        for _ln in _env_path.read_text(encoding="utf-8").splitlines():
+            _ln = _ln.strip()
+            if _ln and not _ln.startswith("#") and "=" in _ln:
+                _k, _v = _ln.split("=", 1)
+                _k = _k.strip()
+                if _k and _k not in os.environ:
+                    os.environ[_k] = _v.strip()
+except Exception:
+    pass
 
 # 任务状态（单任务，够用）
 TASK = {
@@ -171,6 +188,17 @@ def guess_fields(title_line: str) -> dict:
     return out
 
 
+def next_episode_id():
+    """读 episodes/ 下最大数字目录 +1，返回 3 位期号（如 028）"""
+    eps_dir = BASE_DIR / "episodes"
+    mx = 0
+    if eps_dir.exists():
+        for d in eps_dir.iterdir():
+            if d.is_dir() and d.name.isdigit():
+                mx = max(mx, int(d.name))
+    return f"{mx + 1:03d}"
+
+
 def read_script(path):
     """读取稿子（支持 txt / docx），返回 (标题行, 正文)"""
     p = Path(path)
@@ -199,12 +227,17 @@ def run_pipeline(params):
         ep_dir = BASE_DIR / "episodes" / episode
         ep_dir.mkdir(parents=True, exist_ok=True)
 
-        # 1. 准备稿子：去标题，写入 script.txt
-        title_line, body = read_script(params["script_path"])
-        if body is None:
-            raise RuntimeError("稿子读取失败")
-        (ep_dir / "script.txt").write_text(body, encoding="utf-8")
-        log(f"✓ 稿子就绪：{count_han(body)} 字（已去标题）")
+        # 1. 准备稿子：AI 模式 script.txt 已由 ai-generate 写入；手动模式去标题写入
+        ai_mode = params.get("ai_mode", False)
+        if ai_mode:
+            body = (ep_dir / "script.txt").read_text(encoding="utf-8")
+            log(f"✓ AI 稿子就绪：{count_han(body)} 字")
+        else:
+            title_line, body = read_script(params["script_path"])
+            if body is None:
+                raise RuntimeError("稿子读取失败")
+            (ep_dir / "script.txt").write_text(body, encoding="utf-8")
+            log(f"✓ 稿子就绪：{count_han(body)} 字（已去标题）")
 
         # 2. 本地图片
         cmd = [sys.executable, str(BASE_DIR / "run.py"), "-e", episode]
@@ -399,6 +432,73 @@ class Handler(BaseHTTPRequestHandler):
                 subprocess.run(["pkill", "-9", "-f", "ffmpeg"], capture_output=True)
             except Exception as e:
                 return self._json({"ok": False, "msg": f"停止失败：{e}"})
+            return self._json({"ok": True})
+
+        if u.path == "/api/ai-generate":
+            """AI 智能出稿：调 qwen-max 生成稿子 → 建期号目录 → 写 script.txt + prompts.json"""
+            if TASK["running"]:
+                return self._json({"ok": False, "msg": "已有任务在跑，请先等它完成"})
+            instruction = (data.get("instruction") or "").strip()
+            if not instruction:
+                return self._json({"ok": False, "msg": "请先输入你想做的内容"})
+            try:
+                duration_min = max(1, min(30, int(data.get("duration_min") or 3)))
+            except (TypeError, ValueError):
+                duration_min = 3
+            # 读 .env 拿 DASHSCOPE_API_KEY
+            env_path = BASE_DIR / ".env"
+            api_key = ""
+            if env_path.exists():
+                for ln in env_path.read_text(encoding="utf-8").splitlines():
+                    if ln.strip().startswith("DASHSCOPE_API_KEY"):
+                        api_key = ln.split("=", 1)[-1].strip()
+                        break
+            if not api_key:
+                return self._json({"ok": False,
+                                   "msg": "未配置 DASHSCOPE_API_KEY，请到高级设置里填生图密钥"})
+            cfg = load_cfg()
+            try:
+                result = generate_script(
+                    instruction, duration_min, api_key,
+                    series_name=cfg.get("title_card", {}).get("series_name", "上下五千年"),
+                    style_anchor=cfg.get("image", {}).get("style_anchor", ""),
+                )
+            except AIScriptError as e:
+                return self._json({"ok": False, "msg": str(e)})
+            # 期号自动递增 + 写文件
+            episode_id = next_episode_id()
+            ep_dir = BASE_DIR / "episodes" / episode_id
+            ep_dir.mkdir(parents=True, exist_ok=True)
+            (ep_dir / "script.txt").write_text(result["full_script"], encoding="utf-8")
+            prompts = [{"id": "auto_01", "title": "AI 生成",
+                        "prompts": result["image_prompts"]}]
+            (ep_dir / "prompts.json").write_text(
+                json.dumps(prompts, ensure_ascii=False, indent=2), encoding="utf-8")
+            log(f"✓ AI 出稿：期号 {episode_id}，{result['char_count']} 字，"
+                f"{len(result['image_prompts'])} 张图")
+            return self._json({
+                "ok": True,
+                "episode_id": episode_id,
+                "episode_dir": str(ep_dir),
+                "title": result["title"],
+                "hook": result["hook"],
+                "script_preview": result["script_body"][:200],
+                "char_count": result["char_count"],
+                "image_count": len(result["image_prompts"]),
+                "series_name": result["series_name"],
+                "episode_name": result["episode_name"],
+            })
+
+        if u.path == "/api/ai-start":
+            """AI 模式开始制作：script.txt/prompts.json 已就位，直接跑 run_pipeline"""
+            if TASK["running"]:
+                return self._json({"ok": False, "msg": "已有任务在跑"})
+            episode = (data.get("episode") or "").strip()
+            ep_dir = BASE_DIR / "episodes" / episode
+            if not episode or not (ep_dir / "script.txt").exists():
+                return self._json({"ok": False, "msg": "期号不存在或缺少 script.txt，请先 AI 生成"})
+            data["ai_mode"] = True
+            threading.Thread(target=run_pipeline, args=(data,), daemon=True).start()
             return self._json({"ok": True})
 
         if u.path == "/api/start":
