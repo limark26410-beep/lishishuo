@@ -19,6 +19,35 @@ from aiohttp.resolver import AsyncResolver
 from edge_tts import Communicate, SubMaker
 from edge_tts.exceptions import EdgeTTSException
 
+import edge_tts.communicate as _edge_comm
+
+
+def _patch_edge_tts_connector_owner():
+    """edge-tts 7.2.8 多段流式 bug 补丁：
+
+    __stream() 用 async with ClientSession(connector=self.connector) 时
+    connector_owner 默认 True，段结束 session.close() 会把共享 connector 一起关掉，
+    长文本第 2 段报 Session is closed。
+    强制 connector_owner=False：session 不拥有外部传入的 connector，close 时不会关闭它。
+    """
+    if getattr(_edge_comm, "_connector_owner_patched", False):
+        return
+
+    _OrigClientSession = _edge_comm.aiohttp.ClientSession
+
+    class _PatchedClientSession(_OrigClientSession):
+        def __init__(self, *args, connector=None, connector_owner=True, **kwargs):
+            if connector is not None:
+                connector_owner = False
+            super().__init__(*args, connector=connector,
+                             connector_owner=connector_owner, **kwargs)
+
+    _edge_comm.aiohttp.ClientSession = _PatchedClientSession
+    _edge_comm._connector_owner_patched = True
+
+
+_patch_edge_tts_connector_owner()
+
 # 公共 DNS：绕过 Shadowrocket 假 DNS（198.18.0.2），解析微软真实 IP
 _DNS_SERVERS = ["114.114.114.114", "223.5.5.5"]
 _MAX_RETRIES = 4
