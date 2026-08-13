@@ -1,12 +1,65 @@
 """
 TTS 配音工具模块
-包装 edge-tts CLI 调用，输出 audio.mp3 + subs.vtt
+调用 edge-tts Python API + 自定义 DNS 解析器，输出 audio.mp3 + subs.vtt
+
+背景（工单 2026-08-13 TTS 网络根治）：
+- Shadowrocket 虚拟网卡 utun3 把系统 DNS 改成假 DNS（198.18.0.2）
+- speech.platform.bing.com 被劫持成假 IP 198.18.0.19，微软真实服务器连不上
+- 方案：aiohttp AsyncResolver 走公共 DNS（114.114.114.114 / 223.5.5.5）绕过假 DNS
 """
 
-import subprocess
+import asyncio
 import os
 import re
+import subprocess
 from pathlib import Path
+
+import aiohttp
+from aiohttp.resolver import AsyncResolver
+from edge_tts import Communicate, SubMaker
+from edge_tts.exceptions import EdgeTTSException
+
+# 公共 DNS：绕过 Shadowrocket 假 DNS（198.18.0.2），解析微软真实 IP
+_DNS_SERVERS = ["114.114.114.114", "223.5.5.5"]
+_MAX_RETRIES = 4
+
+
+def _tts_once(
+    text: str,
+    output_audio: str,
+    output_subs: str,
+    voice: str,
+    rate: str,
+) -> int:
+    """单次 TTS（无重试），返回音频字节数。resolver/connector 必须在事件循环内创建（Python 3.14 限制）"""
+
+    async def _run():
+        resolver = AsyncResolver(nameservers=_DNS_SERVERS)
+        connector = aiohttp.TCPConnector(resolver=resolver)
+
+        com = Communicate(
+            text,
+            voice,
+            rate=rate,
+            connector=connector,
+            connect_timeout=30,
+            receive_timeout=300,
+        )
+        submaker = SubMaker()
+        audio = bytearray()
+        async for chunk in com.stream():
+            if chunk["type"] == "audio":
+                audio.extend(chunk["data"])
+            elif chunk["type"] in ("WordBoundary", "SentenceBoundary"):
+                submaker.feed(chunk)
+        with open(output_audio, "wb") as f:
+            f.write(bytes(audio))
+        # SubMaker 生成 SRT；vtt_to_srt() 对 SRT 输入幂等（重编号），无需转 VTT
+        with open(output_subs, "w", encoding="utf-8") as f:
+            f.write(submaker.get_srt())
+        return len(audio)
+
+    return asyncio.run(_run())
 
 
 def generate_tts(
@@ -17,7 +70,7 @@ def generate_tts(
     rate: str = "-4%",
 ) -> dict:
     """
-    调用 edge-tts 生成配音音频 + 字幕文件
+    调用 edge-tts 生成配音音频 + 字幕文件（自定义 DNS 直连，绕过 Shadowrocket 劫持）
     返回 {audio_path, subs_path, duration_sec}
     """
     script_path = str(script_path)
@@ -26,51 +79,36 @@ def generate_tts(
 
     ensure_dir(output_audio)
 
-    cmd = [
-        "edge-tts",
-        "--file", script_path,
-        "--voice", voice,
-        f"--rate={rate}",
-        "--write-media", output_audio,
-        "--write-subtitles", output_subs,
-    ]
+    with open(script_path, "r", encoding="utf-8") as f:
+        text = f.read().strip()
 
     print(f"  Running: edge-tts --voice {voice} --rate {rate}")
 
-    # 网络波动常见（微软语音服务），自动重试
     import time as _t
-    max_retries = 4
-    result = None
-    for attempt in range(1, max_retries + 1):
-        try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
-            if result.returncode == 0:
-                break
-            err = (result.stderr or "")[-300:]
-            transient = any(k in err for k in
-                            ("Timeout", "timeout", "ConnectionError", "ConnectionTimeout",
-                             "WSServerHandshakeError", "Temporary", "Connection reset"))
-            if attempt < max_retries and transient:
-                wait = attempt * 8
-                print(f"  ⚠ 网络超时（第{attempt}次），{wait}秒后重试…")
-                _t.sleep(wait)
-                continue
-            raise RuntimeError(f"edge-tts failed: {err}")
-        except subprocess.TimeoutExpired:
-            if attempt < max_retries:
-                wait = attempt * 8
-                print(f"  ⚠ 执行超时（第{attempt}次），{wait}秒后重试…")
-                _t.sleep(wait)
-                continue
-            raise RuntimeError("edge-tts 多次超时，请检查网络或稍后再试")
 
-    if result is None or result.returncode != 0:
-        raise RuntimeError("edge-tts 失败，请检查网络")
+    # 网络波动常见（微软语音服务），自动重试
+    last_err = None
+    for attempt in range(1, _MAX_RETRIES + 1):
+        try:
+            audio_bytes = _tts_once(text, output_audio, output_subs, voice, rate)
+            if audio_bytes > 0:
+                break
+            raise RuntimeError("empty audio")
+        except (TimeoutError, aiohttp.ClientError, ConnectionError,
+                OSError, EdgeTTSException, RuntimeError) as e:
+            last_err = e
+            if attempt < _MAX_RETRIES:
+                wait = attempt * 8
+                print(f"  ⚠ 网络超时（第{attempt}次），{wait}秒后重试…（{type(e).__name__}: {str(e)[:120]}）")
+                _t.sleep(wait)
+                continue
+    else:
+        raise RuntimeError(f"edge-tts failed: {last_err}")
+
     if attempt > 1:
         print(f"  ✓ 第 {attempt} 次尝试成功")
 
     # 获取音频时长
-    import re
     dur_result = subprocess.run(
         ["ffmpeg", "-i", output_audio],
         capture_output=True, text=True
