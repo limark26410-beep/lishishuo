@@ -70,6 +70,8 @@ def _call_qwen(system, user, api_key):
         ],
         "temperature": 0.7,
         "max_tokens": 4096,
+        "thinking": {"type": "disabled"},  # 关闭思维链：写稿是结构化文本生成，不需要深度推理；
+        # 不关的话 reasoning_content 会吃光 max_tokens，content 为空 → JSON 解析失败
     }
     last_err = None
     for attempt in range(1, MAX_RETRIES + 2):
@@ -82,7 +84,11 @@ def _call_qwen(system, user, api_key):
             )
             resp.raise_for_status()
             data = resp.json()
-            return data["choices"][0]["message"]["content"]
+            content = data["choices"][0]["message"]["content"]
+            if not content or not content.strip():
+                # 防御：空 content 走重试而非伪报错「不是合法 JSON」
+                raise ValueError("模型返回空内容")
+            return content
         except Exception as e:  # noqa: BLE001 网络/超时/限流统一重试
             last_err = e
             if attempt <= MAX_RETRIES:
