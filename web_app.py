@@ -10,6 +10,7 @@ import json
 import os
 import queue
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -24,11 +25,30 @@ from lib.ai_script_gen import AIScriptError, generate_script
 
 BASE_DIR = Path(__file__).parent.resolve()
 CONFIG_PATH = BASE_DIR / "config.yaml"
+EXAMPLE_CONFIG_PATH = BASE_DIR / "config.example.yaml"
 PORT = 8765
 
-# launchd 启动时 PATH 很干净，找不到 venv/bin 下的 edge-tts 和 /usr/local/bin 下的 ffmpeg
-# 这里把这两个目录补进 PATH，让 run.py 等子进程都能继承到
-os.environ["PATH"] = str(BASE_DIR / "venv/bin") + ":" + "/usr/local/bin:" + os.environ.get("PATH", "")
+# ── PATH 检测（GL-20260814-02 可移植化）：venv/bin 优先，ffmpeg 自动补齐 ──
+# launchd/服务器等干净环境 PATH 可能只有 /usr/bin:/bin，找不到 venv/bin 下的
+# edge-tts 和系统 ffmpeg；这里把 venv/bin + 常见 ffmpeg 安装目录 + which 探测结果
+# 全部补进 PATH，让 run.py 等子进程都能继承到。ffmpeg 由使用者自装，
+# 工具只负责找到它；实在找不到则按平台提示安装命令。
+_path_dirs = [str(BASE_DIR / "venv/bin")]
+for _d in ("/usr/local/bin", "/opt/homebrew/bin", "/opt/ffmpeg/bin"):
+    if os.path.isdir(_d) and _d not in _path_dirs:
+        _path_dirs.append(_d)
+_ffmpeg = shutil.which("ffmpeg")
+if _ffmpeg:
+    _d = os.path.dirname(_ffmpeg)
+    if _d not in _path_dirs:
+        _path_dirs.append(_d)
+os.environ["PATH"] = ":".join(_path_dirs + [os.environ.get("PATH", "")])
+if not shutil.which("ffmpeg"):
+    _hint = {
+        "darwin": "brew install ffmpeg",
+        "win32": "winget install ffmpeg（或从 https://www.gyan.dev/ffmpeg/builds/ 下载）",
+    }.get(sys.platform, "sudo apt install ffmpeg 或 sudo yum install ffmpeg")
+    print(f"⚠ 未检测到 ffmpeg，请先安装：{_hint}（详见 使用说明.md）")
 
 # 加载 .env 到环境变量（不覆盖已存在的），供 run.py 子进程继承生图 key
 # 这样无论从终端还是双击启动，子进程都能拿到 DASHSCOPE_API_KEY
@@ -54,6 +74,7 @@ TASK = {
     "done": False,
     "error": None,
     "result_dir": "",
+    "task_id": "",   # GL-20260814-02：SDK 任务 id（= 期号）
     "proc": None,
     "stopped": False,
 }
@@ -77,8 +98,34 @@ STEP_MARKS = [
 
 
 def load_cfg():
+    """读 config.yaml；不存在时从 config.example.yaml 复制生成；
+    存在但缺字段时用模板默认值补齐（用户已有值优先）。"""
+    if not CONFIG_PATH.exists():
+        if EXAMPLE_CONFIG_PATH.exists():
+            shutil.copy2(EXAMPLE_CONFIG_PATH, CONFIG_PATH)
+            print(f"✓ 首次启动：已从模板生成 {CONFIG_PATH.name}")
+        else:
+            raise FileNotFoundError(f"缺少配置文件：{CONFIG_PATH}")
     with open(CONFIG_PATH, encoding="utf-8") as f:
-        return yaml.safe_load(f)
+        cfg = yaml.safe_load(f) or {}
+    # 缺字段补默认（模板优先，不覆盖用户已有值）
+    if EXAMPLE_CONFIG_PATH.exists():
+        try:
+            defaults = yaml.safe_load(
+                EXAMPLE_CONFIG_PATH.read_text(encoding="utf-8")) or {}
+            _deep_merge(defaults, cfg)
+        except Exception:
+            pass
+    return cfg
+
+
+def _deep_merge(defaults: dict, cfg: dict):
+    """把 defaults 里 cfg 缺失的键补进去（递归）；cfg 已有值不覆盖"""
+    for k, v in defaults.items():
+        if k not in cfg:
+            cfg[k] = v
+        elif isinstance(v, dict) and isinstance(cfg[k], dict):
+            _deep_merge(v, cfg[k])
 
 
 def save_cfg(cfg):
@@ -225,7 +272,8 @@ def read_script(path):
 def run_pipeline(params):
     """后台线程跑流水线"""
     TASK.update({"running": True, "logs": [], "step": "准备中",
-                 "progress": 1, "done": False, "error": None, "stopped": False})
+                 "progress": 1, "done": False, "error": None,
+                 "stopped": False, "task_id": str(params.get("episode", ""))})
     try:
         episode = params["episode"]
         ep_dir = BASE_DIR / "episodes" / episode
@@ -243,9 +291,13 @@ def run_pipeline(params):
             (ep_dir / "script.txt").write_text(body, encoding="utf-8")
             log(f"✓ 稿子就绪：{count_han(body)} 字（已去标题）")
 
-        # 2. 本地图片
+        # 2. 本地图片 / 视频素材
         cmd = [sys.executable, str(BASE_DIR / "run.py"), "-e", episode]
-        if params.get("images_dir"):
+        if params.get("video_dir"):
+            # 视频模式：素材目录，run.py 自动切 clip 模式并跳过生图
+            cmd += ["--video-dir", os.path.expanduser(params["video_dir"])]
+            log(f"✓ 视频素材库：{params['video_dir']}")
+        elif params.get("images_dir"):
             src = Path(params["images_dir"])
             dst = ep_dir / "images"
             dst.mkdir(exist_ok=True)
@@ -312,8 +364,17 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(b)))
+        self.send_header("Access-Control-Allow-Origin", "*")  # SDK：同事浏览器/服务端集成
         self.end_headers()
         self.wfile.write(b)
+
+    def do_OPTIONS(self):
+        """CORS 预检（SDK 集成用）"""
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.end_headers()
 
     def do_GET(self):
         u = urlparse(self.path)
@@ -377,6 +438,50 @@ class Handler(BaseHTTPRequestHandler):
 
         elif u.path == "/api/config":
             self._json(load_cfg())
+        elif u.path == "/api/video-topics":
+            """视频素材库题材列表（video_source.root 下第一级目录名）"""
+            try:
+                cfg = load_cfg()
+                root = os.path.expanduser(
+                    cfg.get("video_source", {}).get("root", "~/历史说素材/视频/"))
+                topics = []
+                if os.path.isdir(root):
+                    topics = sorted(
+                        d.name for d in Path(root).iterdir()
+                        if d.is_dir() and not d.name.startswith("_"))
+                self._json({"root": root, "topics": topics})
+            except Exception as e:
+                self._json({"root": "", "topics": [], "error": str(e)})
+        elif u.path.startswith("/api/task/"):
+            """SDK：查任务进度（兼容任意 id，单任务模型下返回当前/最近任务状态）"""
+            tid = u.path.rsplit("/", 1)[-1]
+            with LOG_LOCK:
+                status = ("done" if TASK["done"]
+                          else "running" if TASK["running"] else "idle")
+                self._json({
+                    "task_id": TASK.get("task_id") or tid,
+                    "status": status,
+                    "step": TASK["step"],
+                    "progress": TASK["progress"],
+                    "logs": TASK["logs"][-80:],
+                    "error": TASK["error"],
+                })
+        elif u.path.startswith("/api/output/"):
+            """SDK：下载成片 mp4（task_id = 期号）"""
+            tid = u.path.rsplit("/", 1)[-1]
+            fp = (BASE_DIR / "episodes" / tid / "final.mp4")
+            if not fp.exists():
+                return self._json({"ok": False,
+                                   "msg": "成片不存在（任务未完成或期号错误）"}, 404)
+            data = fp.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "video/mp4")
+            self.send_header("Content-Disposition",
+                             f'attachment; filename="{tid}.mp4"')
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(data)
         else:
             self.send_error(404)
 
@@ -529,6 +634,8 @@ class Handler(BaseHTTPRequestHandler):
                 cfg.setdefault("tts", {})["rate"] = adv["rate"]
             if "library_root" in adv:
                 cfg.setdefault("output", {})["library_root"] = adv["library_root"]
+            if "video_source_root" in adv and adv["video_source_root"]:
+                cfg.setdefault("video_source", {})["root"] = adv["video_source_root"]
             if "series_name" in adv:
                 cfg.setdefault("title_card", {})["series_name"] = adv["series_name"]
             if "img_model" in adv and adv["img_model"]:
@@ -537,6 +644,61 @@ class Handler(BaseHTTPRequestHandler):
                 cfg.setdefault("image", {}).setdefault("tongyi", {})["size"] = adv["img_size"]
             save_cfg(cfg)
             return self._json({"ok": True})
+
+        if u.path == "/api/render":
+            """SDK：投稿子出片（GL-20260814-02）
+            body: {script, 素材库?, title?, duration?, name?}
+            script 三选一：稿子文本 / 文件路径 / 投递目录路径（目录内找 script.txt 或第一个 .txt）
+            """
+            if TASK["running"]:
+                return self._json({"ok": False,
+                                   "msg": "已有任务在跑，请先等它完成"}, 409)
+            script = data.get("script") or ""
+            if not isinstance(script, str) or not script.strip():
+                return self._json({"ok": False, "msg": "script 不能为空（文本/文件路径/目录路径）"})
+
+            # 解析 script：目录 → 文件 → 纯文本
+            body = None
+            s = os.path.expanduser(script.strip())
+            if os.path.isdir(s):
+                d = Path(s)
+                cand = []
+                for p in sorted(d.iterdir()):
+                    if p.name.lower() in ("script.txt", "稿子.txt", "script.md"):
+                        cand.insert(0, p)
+                    elif p.suffix.lower() in (".txt", ".md"):
+                        cand.append(p)
+                if cand:
+                    _t, body = read_script(cand[0])
+            elif os.path.isfile(s):
+                _t, body = read_script(s)
+            else:
+                body = script  # 视为稿子文本
+            if not body or not body.strip():
+                return self._json({"ok": False, "msg": "无法解析稿子（目录里没找到 script.txt/稿子.txt）"})
+
+            # 期号自动递增 + 写稿
+            episode = next_episode_id()
+            ep_dir = BASE_DIR / "episodes" / episode
+            ep_dir.mkdir(parents=True, exist_ok=True)
+            (ep_dir / "script.txt").write_text(body, encoding="utf-8")
+
+            # 素材库：素材库字段（中文）或 video_dir / library 别名
+            video_lib = (data.get("素材库") or data.get("video_dir")
+                         or data.get("library") or "")
+            params = {
+                "episode": episode,
+                "ai_mode": True,
+                "video_dir": video_lib,
+                "title": data.get("title") or "",
+                "name": data.get("name") or "",
+                "series": data.get("series") or "",
+            }
+            threading.Thread(target=run_pipeline, args=(params,), daemon=True).start()
+            log(f"✓ SDK render 任务启动：期号 {episode}，{count_han(body)} 字")
+            return self._json({"ok": True, "task_id": episode,
+                               "episode": episode})
+
 
         if u.path == "/api/save-key":
             """把 API Key 写入 .env（不进 config.yaml，避免随代码泄露）
@@ -617,13 +779,22 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
-    url = f"http://127.0.0.1:{PORT}"
+    # 端口被占用自动 +1（GL-20260814-02 可移植化）
+    port = PORT
+    while True:
+        try:
+            srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+            break
+        except OSError:
+            port += 1
+    url = f"http://127.0.0.1:{port}"
     print(f"\n{'='*44}")
     print(f"   历史说 · 出片工具  已启动")
     print(f"{'='*44}")
     print(f"\n   请在浏览器打开这个地址：\n")
     print(f"       {url}\n")
+    if port != PORT:
+        print(f"   （默认端口 {PORT} 被占用，已自动切换到 {port}）\n")
     print(f"   （下面会尝试自动打开；没弹出就手动复制上面地址）")
     print(f"   用完关掉此窗口即可退出\n")
     print(f"{'='*44}\n")

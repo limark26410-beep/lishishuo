@@ -23,14 +23,28 @@ OUTLINE_W = 3
 PUNCTS = set('\uff0c\u3002\uff01\uff1f\u3001\uff1b\uff1a')
 
 
+def _pick_font(sub: dict) -> str:
+    """按平台优先顺序选第一个存在的字体（三平台）"""
+    order = {
+        "darwin": ("font_path", "font_path_linux", "font_path_windows"),
+        "linux": ("font_path_linux", "font_path", "font_path_windows"),
+        "win32": ("font_path_windows", "font_path", "font_path_linux"),
+    }.get(sys.platform, ("font_path", "font_path_linux", "font_path_windows"))
+    for k in order:
+        fp = sub.get(k)
+        if fp and os.path.exists(fp):
+            return fp
+    return ""
+
+
 def configure(cfg: dict):
     """从 config.yaml 注入参数，取代硬编码"""
     global FONT_PATH, FONT_SIZE, IMG_W, IMG_H, MARGIN_BOTTOM
     global MARGIN_SIDE, MAX_CHARS_PER_LINE, MAX_LINES, BAR_HEIGHT, OUTLINE_W
     sub = (cfg or {}).get("subtitle", {})
     vid = (cfg or {}).get("video", {})
-    fp = sub.get("font_path_linux") if sys.platform == "linux" else sub.get("font_path")
-    if fp and os.path.exists(fp):
+    fp = _pick_font(sub)
+    if fp:
         FONT_PATH = fp
     FONT_SIZE = int(sub.get("font_size", FONT_SIZE))
     MARGIN_BOTTOM = int(sub.get("margin_bottom", MARGIN_BOTTOM))

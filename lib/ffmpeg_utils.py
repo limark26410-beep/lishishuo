@@ -123,6 +123,44 @@ def build_ken_burns_clip(
     return output_path
 
 
+# ─────────── 视频片段截取（视频模式） ───────────
+
+def build_video_clip(
+    video_path: str,
+    output_path: str,
+    start: float,
+    duration: float,
+    width: int = 1080,
+    height: int = 1920,
+    fps: int = 25,
+    cfg: dict = None,
+) -> str:
+    """
+    截取视频片段 + 画幅适配 + 静音，输出规整竖屏片段
+    - 输入侧 -ss 快速 seek（起点可能偏移 1 个 GOP，轮播素材无碍）
+    - scale + crop 等比放大裁剪居中，不拉伸不变形
+    - -an 静音（方案定稿默认静音，只留 TTS 配音 + BGM）
+    - 编码参数对齐 build_ken_burns_clip（libx264/平台编码器、yuv420p、fps）
+    """
+    duration_sec = max(float(duration), 1.0)
+    vf = (
+        f"scale={width}:{height}:force_original_aspect_ratio=increase,"
+        f"crop={width}:{height},setsar=1,fps={fps}"
+    )
+    encoder_args = _build_encoder_args(cfg or {})
+
+    cmd = (["ffmpeg", "-y", "-ss", f"{start:.2f}", "-i", str(video_path),
+            "-t", f"{duration_sec:.2f}", "-vf", vf]
+           + encoder_args
+           + ["-an", str(output_path)])
+    subprocess.run(cmd, check=True, capture_output=True, text=True)
+
+    actual_dur = get_media_duration(output_path)
+    print(f"  Video clip: {Path(output_path).name} -> {actual_dur:.1f}s "
+          f"(start={start:.1f}s)")
+    return output_path
+
+
 # ─────────── 硬切拼接（concat，不转码） ───────────
 
 def concat_clips(

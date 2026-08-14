@@ -1,6 +1,6 @@
 #!/bin/bash
-# 双击启动"历史说出片工具"
-# 自动定位到脚本所在目录，启动网页服务
+# 双击启动"历史说出片工具"（macOS）
+# 自动定位到脚本所在目录，检查 ffmpeg，启动网页服务
 
 cd "$(dirname "$0")"
 VENV_PYTHON="./venv/bin/python3"
@@ -10,6 +10,21 @@ echo "  ┌───────────────────────
 echo "  │     历史说 · 出片工具            │"
 echo "  └─────────────────────────────────┘"
 echo ""
+
+# 检查 ffmpeg（视频处理必需，同事自装）
+if ! command -v ffmpeg >/dev/null 2>&1; then
+    echo "  ⚠ 未检测到 ffmpeg，请先安装（装一次永久有效）："
+    echo ""
+    echo "      brew install ffmpeg"
+    echo ""
+    echo "  （没有 brew 先跑：/bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"）"
+    echo "  详见 使用说明.md"
+    echo ""
+    read -n 1 -s -r -p "  按任意键退出…"
+    echo ""
+    exit 1
+fi
+echo "  ✓ ffmpeg 已就绪 ($(command -v ffmpeg))"
 
 # 检查虚拟环境
 if [ ! -f "$VENV_PYTHON" ]; then

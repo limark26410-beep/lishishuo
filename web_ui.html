@@ -169,6 +169,25 @@
       <div class="hint">成片、图片、录音、稿子、字幕会分类存进这个目录</div>
     </div>
 
+    <div class="row">
+      <label>视频素材库</label>
+      <div class="flex">
+        <input type="text" id="a_video_root" value="~/历史说素材/视频">
+        <button class="ghost" onclick="pickVideoRoot()">选择目录</button>
+      </div>
+      <div class="hint">视频混剪素材库根目录（视频模式用），素材按「题材/主题_编号.mp4」组织</div>
+    </div>
+
+    <div class="row" id="videoTopicRow" style="display:none">
+      <label>本期题材</label>
+      <div class="flex">
+        <select id="a_video_topic" style="flex:1">
+          <option value="">全部素材按顺序轮播</option>
+        </select>
+      </div>
+      <div class="hint">选了题材只在该题材目录里轮播；留空=整个素材库轮播</div>
+    </div>
+
     <details>
       <summary>⚙ 高级设置(一般不用改)</summary>
       <div style="margin-top:14px;padding:14px;background:#100d09;border:1px solid #342d24;border-radius:6px">
@@ -292,6 +311,7 @@ async function loadCfg(){
     if(c.video?.encoder_options?.libx264) $('a_crf').value = c.video.encoder_options.libx264.crf ?? 26;
     if(c.tts){ if(c.tts.voice && [...$('a_voice').options].some(o=>o.value===c.tts.voice)) $('a_voice').value=c.tts.voice; $('a_rate').value = c.tts.rate || ''; }
     if(c.output?.library_root) $('a_root').value = c.output.library_root;
+    if(c.video_source?.root) $('a_video_root').value = c.video_source.root;
     if(c.image?.tongyi){
       const m = c.image.tongyi.model, sz = c.image.tongyi.size;
       if(m && [...$('a_model').options].some(o=>o.value===m)) $('a_model').value = m;
@@ -299,7 +319,7 @@ async function loadCfg(){
     }
   }catch(e){}
 }
-window.addEventListener('load', async ()=>{ await loadVoices(); await loadCfg(); loadKeyStatus(); });
+window.addEventListener('load', async ()=>{ await loadVoices(); await loadCfg(); loadKeyStatus(); await loadVideoTopics(); });
 
 function toggleImg(){
   const v = document.querySelector('input[name=imgsrc]:checked').value;
@@ -414,12 +434,33 @@ async function pickRoot(){
   if(r.ok){ $('a_root').value = r.path; }
 }
 
+async function pickVideoRoot(){
+  const r = await post('/api/pick', {kind:'dir'});
+  if(r.ok){ $('a_video_root').value = r.path; await loadVideoTopics(); }
+}
+
+async function loadVideoTopics(){
+  try{
+    const r = await (await fetch('/api/video-topics')).json();
+    if(r.root) $('a_video_root').value = r.root;
+    const sel = $('a_video_topic');
+    sel.innerHTML = '<option value="">全部素材按顺序轮播</option>';
+    for(const t of (r.topics||[])){
+      const o = document.createElement('option');
+      o.value = t; o.textContent = t;
+      sel.appendChild(o);
+    }
+    $('videoTopicRow').style.display = (r.topics||[]).length ? 'block' : 'none';
+  }catch(e){}
+}
+
 async function saveAdv(){
   await post('/api/save-config', {advanced:{
     title_duration: +$('a_dur').value, margin_bottom: +$('a_margin').value,
     font_size: +$('a_font').value, crf: +$('a_crf').value,
     voice: $('a_voice').value, rate: $('a_rate').value,
     library_root: $('a_root').value,
+    video_source_root: $('a_video_root').value,
     img_model: $('a_model').value,
     img_size: $('a_size').value,
   }});
@@ -531,6 +572,12 @@ async function start(){
   if(document.querySelector('input[name=imgsrc]:checked').value === 'local'){
     params.images_dir = $('imgdir').value.trim();
     params.shuffle_images = $('shuffleImg').checked;
+  }
+  // 视频模式：选了题材 → 素材库 = 根目录/题材
+  const topic = $('a_video_topic') ? $('a_video_topic').value : '';
+  if(topic){
+    const root = ($('a_video_root').value || '').trim().replace(/[\\/]+$/, '');
+    params.video_dir = root + '/' + topic;
   }
   if(!params.episode || !params.script_path){
     alert('请填期号和稿子路径'); return;

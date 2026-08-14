@@ -44,6 +44,7 @@ from pipeline_steps import (
 )
 from ffmpeg_utils import (
     build_ken_burns_clip,
+    build_video_clip,
     concat_clips,
     xfade_concat,
     mix_audio,
@@ -181,6 +182,11 @@ def step_mix(episode_dir: str, tts_result: dict, img_result: dict, cfg: dict) ->
     height = video_cfg.get("height", 1920)
     fps = video_cfg.get("fps", 25)
 
+    # ── 视频模式分支（GL-20260814-02）：素材轮播截取 → concat → 复用后处理 ──
+    # 图片模式代码一行不改，只在入口分流
+    if video_cfg.get("mode") == "clip":
+        return _video_step_mix(episode_dir, tts_result, cfg)
+
     # ── 3a. 解析图片结果 ──
     image_map = img_result.get("image_map", {})
     prompts_meta = img_result.get("prompts_meta", [])
@@ -311,6 +317,153 @@ def step_mix(episode_dir: str, tts_result: dict, img_result: dict, cfg: dict) ->
     return final_output
 
 
+def _video_step_mix(episode_dir: str, tts_result: dict, cfg: dict) -> str:
+    """视频模式混剪：素材按顺序轮播截取 → concat → 复用后处理（混音/字幕/片头/编码）。
+
+    素材目录 = cfg.video_source.root（run.py --video-dir 或 CLI/API 传入）。
+    第一步不做段落切分：全片按整段音频均分到素材上（AI 选材是第二步）。
+    素材不足（无素材 / 总时长 < 音频）→ 明确报错，不静默。
+    """
+    print(f"\n{'='*60}")
+    print("STEP 3: 混剪合成（视频模式）")
+    print(f"{'='*60}")
+
+    audio_path = tts_result["audio_path"]
+    subs_srt = tts_result["subs_srt"]
+    audio_dur = tts_result["duration_sec"]
+    clips_dir = os.path.join(episode_dir, "clips")
+    os.makedirs(clips_dir, exist_ok=True)
+
+    video_cfg = cfg.get("video", {})
+    vs_cfg = cfg.get("video_source", {})
+    width = video_cfg.get("width", 1080)
+    height = video_cfg.get("height", 1920)
+    fps = video_cfg.get("fps", 25)
+
+    # ── 3v1. 素材清单（按顺序轮播，不选材）──
+    from material_scanner import scan_material
+    lib_root = os.path.expanduser(vs_cfg.get("root", "~/历史说素材/视频/"))
+    materials = scan_material(lib_root)
+    if not materials:
+        raise RuntimeError(
+            f"该题材缺素材：{lib_root} 下没有可用视频素材\n"
+            f"请把素材按「题材/主题_编号.mp4」放进素材库（详见 使用说明.md）")
+
+    total_dur = sum(m["duration_sec"] for m in materials)
+    print(f"\n  可用素材: {len(materials)} 条 (总时长 {_time_str(total_dur)})")
+    print(f"  音频时长: {_time_str(audio_dur)}")
+    if total_dur < audio_dur:
+        raise RuntimeError(
+            f"素材总时长不足：素材 {total_dur:.0f}s < 音频 {audio_dur:.0f}s。\n"
+            f"请补充素材或缩短稿子（每个题材池建议总时长 ≥ 10 分钟）")
+
+    # ── 3v2. 时间分配：每段 = 音频 / N ──
+    n = len(materials)
+    base_duration = audio_dur / n
+    print(f"\n  时间分配 ({n} 条素材, 每段 {_time_str(base_duration)}):")
+
+    # ── 3v3. 逐条截取（本轮从头部开始截）──
+    print(f"\n  截取视频片段...")
+    clip_paths = []
+    for i, m in enumerate(materials):
+        clip_out = os.path.join(clips_dir, f"clip_{i+1:03d}.mp4")
+        print(f"  [{i+1}/{n}] {Path(m['path']).name} "
+              f"({m['duration_sec']}s {m['width']}x{m['height']})")
+        build_video_clip(
+            video_path=m["path"],
+            output_path=clip_out,
+            start=0.0,
+            duration=base_duration,
+            width=width, height=height, fps=fps,
+            cfg=cfg,
+        )
+        clip_paths.append(clip_out)
+
+    # ── 3v4. 拼接（concat 硬切，不走 xfade）──
+    merged_video = os.path.join(episode_dir, "_merged_video.mp4")
+    print(f"\n  拼接 clips (concat 硬切)...")
+    concat_clips(clip_paths=clip_paths, output_path=merged_video)
+
+    # ── 3v5. 复用后处理：混音 → 字幕 → 片头 → 编码 ──
+    return _post_mix(episode_dir, merged_video, tts_result, cfg)
+
+
+def _post_mix(episode_dir: str, merged_video: str, tts_result: dict, cfg: dict) -> str:
+    """后处理（视频模式专用，与图片分支 3e-3h 同款逻辑）：
+    混音 → 字幕折行检查 → 烧字幕 → 片头叠加 → 编码。
+    图片分支代码保持不动，此函数只服务视频模式。
+    """
+    audio_path = tts_result["audio_path"]
+    subs_srt = tts_result["subs_srt"]
+    bgm_cfg = cfg.get("bgm", {})
+    enc_cfg = cfg.get("video", {}).get("encoding", {})
+
+    # ── 混音 ──
+    print(f"\n  混音...")
+    audio_mixed = os.path.join(episode_dir, "_audio_mixed.mp4")
+    bgm_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        bgm_cfg.get("path", "assets/bgm.mp3"),
+    )
+    mix_audio(
+        video_path=merged_video,
+        audio_path=audio_path,
+        bgm_path=bgm_path,
+        output_path=audio_mixed,
+        bgm_volume=bgm_cfg.get("volume", 0.12),
+        audio_bitrate=enc_cfg.get("audio_bitrate", "192k"),
+    )
+
+    # ── 字幕后处理 + 自动检查 ──
+    print(f"\n  字幕折行处理...")
+    subtitle_burn.configure(cfg)
+    processed_srt = os.path.join(episode_dir, "subs_processed.srt")
+    subtitle_burn.postprocess_srt(subs_srt, processed_srt)
+
+    print(f"  自动检查（超长行 / 全文比对 / 行数）...")
+    script_path = os.path.join(episode_dir, "script.txt")
+    report = check_subtitles(processed_srt, script_path, cfg)
+    print(f"    ✓ {report['entries']} 条 | 超长行 {report.get('over_length', 0)} "
+          f"| 超行数 {report.get('over_lines', 0)} | 字数差 {report.get('char_diff', 0)}")
+
+    # ── 烧字幕（v4 真分辨率方案）──
+    sub_cfg = cfg.get("subtitle", {})
+    print(f"\n  烧录字幕 (font={sub_cfg.get('font_size')}px, "
+          f"margin_bottom={sub_cfg.get('margin_bottom')}px)...")
+    burned = os.path.join(episode_dir, "_burned.mp4")
+    _has_title = os.path.exists(os.path.join(episode_dir, "title_card.png"))
+    subtitle_burn.burn_subtitles_overlay(
+        video_path=audio_mixed,
+        srt_path=processed_srt,
+        output_path=burned,
+        encode_args=_encode_args(cfg, final=not _has_title),
+    )
+
+    # ── 片头 overlay ──
+    tc_cfg = cfg.get("title_card", {})
+    tc_dur = int(tc_cfg.get("duration", 3))
+    final_output = os.path.join(episode_dir, "final.mp4")
+    title_png = os.path.join(episode_dir, "title_card.png")
+
+    if os.path.exists(title_png):
+        print(f"\n  片头叠加 ({tc_dur}秒)...")
+        overlay_title_card(
+            video_path=burned,
+            title_card_png=title_png,
+            output_path=final_output,
+            duration=tc_dur,
+            encode_args=_encode_args(cfg, final=True),
+        )
+    else:
+        print(f"\n  ⚠ 未找到 title_card.png，跳过片头")
+        shutil.move(burned, final_output)
+
+    final_dur = get_media_duration(final_output)
+    print(f"\n  ✓ final.mp4: {_time_str(final_dur)} | "
+          f"{os.path.getsize(final_output)/1024/1024:.1f}MB")
+    return final_output
+
+
 def cleanup(episode_dir: str, cfg: dict):
     cleanup_cfg = cfg.get("cleanup", {})
     import shutil
@@ -367,6 +520,7 @@ def main():
     parser.add_argument("--title-bg", help="片头背景图路径（缺省用纯黑底）")
     parser.add_argument("--name", help="归档名，如 '16-唐朝'（缺省用期号）")
     parser.add_argument("--images-dir", help="本地图片目录（指定则不生图）")
+    parser.add_argument("--video-dir", help="视频模式素材目录（指定则走视频混剪，不生成图片）")
     parser.add_argument("--no-archive", action="store_true", help="不归档到素材库")
     parser.add_argument("--only", choices=["subtitle", "title", "encode"],
                         help="只重跑某一步（需已有中间产物）")
@@ -380,6 +534,13 @@ def main():
     cfg = load_config(config_path)
     episode_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                "episodes", args.episode)
+
+    # 视频模式：--video-dir 指定素材库 → cfg.video.mode=clip + video_source.root
+    video_mode = bool(getattr(args, "video_dir", None))
+    if video_mode:
+        cfg.setdefault("video", {})["mode"] = "clip"
+        cfg.setdefault("video_source", {})["root"] = os.path.expanduser(args.video_dir)
+        print(f"  ▶ 视频模式：素材库 {cfg['video_source']['root']}")
 
     if not os.path.exists(os.path.join(episode_dir, "script.txt")):
         print(f"❌ {episode_dir}/script.txt 不存在")
@@ -423,6 +584,9 @@ def main():
         return step_tts(episode_dir, cfg)
 
     def run_images():
+        if video_mode:
+            # 视频模式不生成图片（step_mix 走视频分支，不读 image_map）
+            return {"image_map": {}, "prompts_meta": []}
         if args.skip_images:
             d = os.path.join(episode_dir, "images")
             if os.path.exists(d):

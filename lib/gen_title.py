@@ -13,7 +13,12 @@ Title clip fixed at 6 seconds (changing breaks -6s subtitle sync).
 import subprocess, os, sys
 from PIL import Image, ImageDraw, ImageFont
 
-FONT = '/System/Library/Fonts/PingFang.ttc'
+# 三平台默认字体（configure 会用 config.yaml 的 subtitle.font_path* 覆盖）
+FONT = {
+    "darwin": "/System/Library/Fonts/PingFang.ttc",
+    "win32": "C:/Windows/Fonts/msyh.ttc",
+    "linux": "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+}.get(sys.platform, "/System/Library/Fonts/PingFang.ttc")
 
 # Template constants
 MAIN_FS = 69          # main title (GOLD)
@@ -32,11 +37,12 @@ BG = "0x0a0503"
 
 
 def configure(cfg: dict):
-    """从 config.yaml 注入片头参数"""
+    """从 config.yaml 注入片头参数（含三平台字体）"""
     global MAIN_FS, SERIES_FS, LINE_GAP, SERIES_GAP, GLINE_GAP
-    global GL_W, GL_H, DUR, W, H, FPS
+    global GL_W, GL_H, DUR, W, H, FPS, FONT
     tc = (cfg or {}).get("title_card", {})
     vid = (cfg or {}).get("video", {})
+    sub = (cfg or {}).get("subtitle", {})
     DUR = int(tc.get("duration", DUR))
     MAIN_FS = int(tc.get("main_font_size", MAIN_FS))
     SERIES_FS = int(tc.get("series_font_size", SERIES_FS))
@@ -48,6 +54,17 @@ def configure(cfg: dict):
     W = int(vid.get("width", W))
     H = int(vid.get("height", H))
     FPS = int(vid.get("fps", FPS))
+    # 三平台字体：按平台顺序选第一个存在的
+    order = {
+        "darwin": ("font_path", "font_path_linux", "font_path_windows"),
+        "linux": ("font_path_linux", "font_path", "font_path_windows"),
+        "win32": ("font_path_windows", "font_path", "font_path_linux"),
+    }.get(sys.platform, ("font_path", "font_path_linux", "font_path_windows"))
+    for k in order:
+        fp = sub.get(k)
+        if fp and os.path.exists(fp):
+            FONT = fp
+            break
 
 # PIL colors
 GOLD_RGBA = (212, 175, 55, 255)

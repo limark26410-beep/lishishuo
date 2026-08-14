@@ -1,0 +1,118 @@
+# 历史说 · 出片工具 配置模板
+# 首次启动自动复制为 config.yaml；本机配置以 config.yaml 为准
+# 路径支持 ~ 展开（三平台通用）
+
+pipeline:
+  name: 历史长音频流水线
+  version: 1.0.0
+
+output:
+  # 成片归档目录（成片/图片/录音/稿子/字幕/短视频 分类存放）
+  library_root: ~/历史说素材/
+  dirs:
+    video: 成片
+    images: 图片
+    audio: 录音
+    script: 稿子
+    subtitle: 字幕
+    shorts: 短视频
+  backup_before_overwrite: true
+  archive_images: false
+
+video_source:
+  # 视频混剪素材库根目录（video.mode=clip 时使用）
+  # 素材按「题材/主题_编号.mp4」组织，见 使用说明.md
+  root: ~/历史说素材/视频/
+
+tts:
+  engine: edge-tts
+  voice: zh-CN-YunjianNeural
+  rate: -4%
+  subtitle_format: vtt
+
+image:
+  source: generate
+  local_dir: ''
+  provider: tongyi
+  style_anchor: 中国古风，水墨质感，纪录片氛围，无文字，场景宏大，写意风格
+  tongyi:
+    api_base: https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis
+    model: wanx2.1-t2i-turbo
+    size: 1080*1440
+    batch_size: 3
+    max_retries: 3
+    poll_interval: 5
+    timeout: 600
+  cost_guard:
+    max_images_per_episode: 50
+    log_file: logs/image_costs.csv
+
+video:
+  width: 1080
+  height: 1920
+  fps: 25
+  aspect: '9:16'
+  pixel_format: yuv420p
+  transition: concat
+  # mode: image=图片混剪（默认，1.0 原样）| clip=视频混剪（素材轮播截取）
+  mode: image
+  ken_burns:
+    zoom_start: 1.0
+    zoom_end: 1.08
+    pan_speed: 0.0004
+    preview_scale: 2
+  xfade:
+    transition: fade
+    duration: 1.0
+  encoder_platform:
+    darwin: h264_videotoolbox
+    linux: libx264
+    win32: libx264
+  encoder_options:
+    libx264:
+      crf: 26
+      preset: medium
+    h264_videotoolbox:
+      bitrate: 3000k
+  audio_codec: aac
+  audio_bitrate: 192k
+
+subtitle:
+  # 三平台字体（按平台顺序取第一个存在的）
+  font_path: /Library/Fonts/AdobeHeitiStd-Regular.otf
+  font_path_linux: /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc
+  font_path_windows: C:/Windows/Fonts/msyh.ttc
+  font_size: 60
+  margin_bottom: 400
+  bar_height: 300
+  max_chars_per_line: 14
+  max_lines: 2
+  outline_width: 3
+
+title_card:
+  duration: 3
+  main_font_size: 69
+  series_font_size: 36
+  line_gap: 25
+  series_gap: 50
+  gold_line_gap: 18
+  gold_line_width: 400
+  gold_line_height: 3
+  series_name: 上下五千年
+
+bgm:
+  enabled: true
+  path: assets/bgm.mp3
+  volume: 0.12
+
+checks:
+  max_line_length: true
+  text_integrity: true
+  max_lines: true
+
+review:
+  enabled: true
+
+cleanup:
+  clean_clips: true
+  clean_images: false
