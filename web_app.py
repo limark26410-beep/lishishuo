@@ -26,6 +26,10 @@ BASE_DIR = Path(__file__).parent.resolve()
 CONFIG_PATH = BASE_DIR / "config.yaml"
 PORT = 8765
 
+# launchd 启动时 PATH 很干净，找不到 venv/bin 下的 edge-tts 和 /usr/local/bin 下的 ffmpeg
+# 这里把这两个目录补进 PATH，让 run.py 等子进程都能继承到
+os.environ["PATH"] = str(BASE_DIR / "venv/bin") + ":" + "/usr/local/bin:" + os.environ.get("PATH", "")
+
 # 加载 .env 到环境变量（不覆盖已存在的），供 run.py 子进程继承生图 key
 # 这样无论从终端还是双击启动，子进程都能拿到 DASHSCOPE_API_KEY
 try:
@@ -344,7 +348,7 @@ class Handler(BaseHTTPRequestHandler):
                 {"name": "zh-TW-YunJheNeural",    "label": "云哲 · 男声 · 台湾腔"},
             ]
             try:
-                r = subprocess.run(["edge-tts", "--list-voices"],
+                r = subprocess.run([str(BASE_DIR / "venv/bin/edge-tts"), "--list-voices"],
                                    capture_output=True, text=True, timeout=25)
                 names = sorted(set(re.findall(r"(zh-[A-Za-z\-]+Neural)", r.stdout)))
                 if names:
