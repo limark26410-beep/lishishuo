@@ -95,7 +95,7 @@ def main():
         print(f"  素材库（config 缺省）: {video_dir}")
 
     duration = args.duration or estimate_duration_min(body)
-    print(f"▶ 期号估算时长: {duration} 分钟（{len(re.findall(r'[\\u4e00-\\u9fff]', body))} 字）")
+    print(f"▶ 期号估算时长: {duration} 分钟（{len(re.findall(r'[\u4e00-\u9fff]', body))} 字）")
 
     # 写 episode 目录
     episode = next_episode_id()
@@ -140,7 +140,7 @@ def main():
 
     # 附：脚本产物说明（供外部脚本解析）
     print(f"EPISODE={episode}")
-    print(f"FINAL={final if not args.output else out_dir / (args.name or episode + '.mp4')}")
+    print(f"FINAL={final if not args.output else out_dir / f'{args.name or episode}.mp4'}")
 
 
 if __name__ == "__main__":

@@ -287,6 +287,23 @@
         <button class="ghost" onclick="aiEditScript()">✏️ 手动修改稿子</button>
       </div>
     </div>
+
+    <!-- GL-20260814-03：AI 选材预览（视频模式） -->
+    <div id="mpBox" style="display:none; margin-top:16px; padding:14px; background:#0f0c08; border:1px solid #342d24; border-radius:8px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+        <div class="step">🎬 AI 选材预览（视频模式）</div>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <span class="hint" id="mpPoolInfo"></span>
+          <button class="ghost" onclick="loadMaterialPlan()">🔄 重新选材</button>
+        </div>
+      </div>
+      <div class="hint" style="margin-top:6px">AI 按段落语义推荐素材（历史/商品/美食通用）；可逐段换素材，确认后开始出片</div>
+      <div id="mpList" style="margin-top:10px"></div>
+      <div style="margin-top:12px">
+        <button id="mpStartBtn" onclick="mpStartRender()">🎬 确认选材，开始出片</button>
+        <span id="mpHint" class="hint" style="margin-left:10px"></span>
+      </div>
+    </div>
   </div>
 
   <div class="card" id="progressCard" style="display:none">
@@ -556,8 +573,113 @@ async function aiConfirm(){
   switchMode('manual');
   isAiMode = true;
 
-  // 3. 滚动到顶部看填好的表单
+  // 3. GL-20260814-03：视频模式自动出选材预览
+  loadMaterialPlan();
+
+  // 4. 滚动到顶部看填好的表单
   window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// ════ GL-20260814-03：AI 选材预览（视频模式）════
+let _mpPlan = null;
+let _mpPool = [];
+let _mpVideoLib = '';
+
+function currentVideoLib(){
+  const topic = $('a_video_topic') ? $('a_video_topic').value : '';
+  const root = ($('a_video_root') && $('a_video_root').value || '').trim().replace(/[\\/]+$/, '');
+  return topic ? root + '/' + topic : root;
+}
+
+async function loadMaterialPlan(){
+  const d = window._aiData;
+  if(!d){ alert('请先生成稿子'); return; }
+  _mpVideoLib = currentVideoLib();
+  if(!_mpVideoLib){ $('mpHint').textContent = '⚠ 请先在设置里填视频素材库根目录（或选择题材）'; return; }
+  $('mpBox').style.display = 'block';
+  $('mpHint').textContent = 'AI 选材中，通常 10-30 秒…';
+  $('mpList').innerHTML = '';
+  $('mpStartBtn').disabled = true;
+  try{
+    const r = await post('/api/material-plan', {script: d.episode_dir + '/script.txt', '素材库': _mpVideoLib});
+    if(!r.ok){ $('mpHint').textContent = '❌ ' + (r.error || r.msg || '选材失败'); return; }
+    _mpPlan = r.plan || [];
+    _mpPool = r.pool || [];
+    renderMpList();
+    const poolS = Math.round(r.pool_sec);
+    const estS = Math.round(r.estimate_sec);
+    const short = poolS < estS;
+    $('mpPoolInfo').innerHTML =
+      `素材池 <b>${poolS}s</b> vs 稿子估算 <b>${estS}s</b>` +
+      (short ? ' <span style="color:#e74c3c">⚠ 素材不足，建议补充或缩短稿子</span>' : '');
+    $('mpHint').textContent = r.degraded ? '⚠ AI 选材失败已降级轮播，可手动换素材' : '✅ 选材完成，可逐段换素材后确认出片';
+    $('mpStartBtn').disabled = false;
+  }catch(e){
+    $('mpHint').textContent = '❌ 网络错误：' + e.message;
+  }
+}
+
+function renderMpList(){
+  const box = $('mpList');
+  box.innerHTML = '';
+  _mpPlan.forEach((p, i) => {
+    const card = document.createElement('div');
+    card.style.cssText = 'border:1px solid #342d24;border-radius:8px;padding:10px 12px;margin-bottom:10px;background:#100d09;';
+    card.innerHTML =
+      '<div style="font-size:12px;color:#d4af37;margin-bottom:6px">段 ' + (i+1) + ' · ' + (p.theme||'') + '</div>' +
+      '<div style="font-size:13px;line-height:1.7;color:#e8e4dc;margin-bottom:8px">' + escHtml((p.text||'').slice(0,120)) + '</div>' +
+      '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
+        '<select data-i="' + i + '" onchange="mpChange(this)" style="flex:1;min-width:180px;padding:4px 6px;background:#14100c;color:#e8e4dc;border:1px solid #342d24;border-radius:4px"></select>' +
+        '<span class="hint" style="font-size:12px">素材 ' + Math.round(p.duration_sec||0) + 's</span>' +
+      '</div>' +
+      '<div class="hint" style="font-size:12px;margin-top:6px">💡 ' + escHtml(p.reason||'') + '</div>';
+    box.appendChild(card);
+    const sel = card.querySelector('select');
+    _mpPool.forEach(m => {
+      const opt = document.createElement('option');
+      opt.value = m.name;
+      opt.textContent = m.name + '（' + Math.round(m.duration_sec||0) + 's' + (m.theme? '·' + m.theme : '') + '）';
+      if(m.desc) opt.title = m.desc;
+      if(m.name === p.material) opt.selected = true;
+      sel.appendChild(opt);
+    });
+  });
+}
+
+function mpChange(sel){
+  const i = +sel.dataset.i;
+  _mpPlan[i].material = sel.value;
+  _mpPlan[i].material_path = '';
+  _mpPlan[i].reason = '手动更换';
+}
+
+async function mpStartRender(){
+  const d = window._aiData;
+  if(!d || !_mpPlan || !_mpPlan.length){ alert('请先生成选材计划'); return; }
+  $('mpStartBtn').disabled = true;
+  $('mpHint').textContent = '提交出片任务…';
+  try{
+    const r = await post('/api/render', {
+      script: d.episode_dir + '/script.txt',
+      '素材库': _mpVideoLib,
+      title: $('title').value.trim() || d.title || '',
+      name: $('name').value.trim() || d.episode_name || '',
+      series: $('series').value.trim() || d.series_name || '',
+      material_plan: _mpPlan.map(p => ({index:p.index, material:p.material, clip_start:p.clip_start, reason:p.reason})),
+    });
+    if(!r.ok){ $('mpHint').textContent = '❌ ' + (r.msg||'启动失败'); $('mpStartBtn').disabled = false; return; }
+    $('mpHint').textContent = '✅ 任务已启动，期号 ' + r.task_id + '，请看下方进度';
+    $('progressCard').style.display = 'block';
+    $('startBtn').disabled = true;
+    poll();
+  }catch(e){
+    $('mpHint').textContent = '❌ 网络错误：' + e.message;
+    $('mpStartBtn').disabled = false;
+  }
+}
+
+function escHtml(s){
+  return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
 async function start(){

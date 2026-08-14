@@ -10,6 +10,7 @@ AI 智能出稿模块
 """
 
 import json
+import os
 import re
 import time
 
@@ -93,7 +94,7 @@ def _call_qwen(system, user, api_key):
             last_err = e
             if attempt <= MAX_RETRIES:
                 time.sleep(2 * attempt)
-    raise AIScriptError("通义千问调用失败：" + str(last_err))
+    raise AIScriptError("AI 调用失败：" + str(last_err))
 
 
 def _extract_json(text):
@@ -172,3 +173,140 @@ def generate_script(instruction, duration_min=3, api_key="",
         "series_name": series,
         "episode_name": ep_name,
     }
+
+
+def recommend_material(segments: list, materials: list, api_key: str = "") -> list:
+    """AI 语义选材（题材无关，GL-20260814-03）。
+
+    输入:
+        segments: 稿子段落 [{"index", "text"}, ...]（lib/script_seg.split_segments 产出）
+        materials: 素材清单（lib/material_scanner.scan_material 产出，
+                   含 path/name/topic/theme/duration_sec/desc）
+    返回: 与 segments 等长的选材计划
+        [{"index", "text", "material": "文件名.mp4", "clip_start": 秒, "reason"}, ...]
+    逐段兜底：某段缺 material / 素材名找不到 / 时长不足 → 从未分配素材按顺序补，
+    全用完则从头循环（保证返回结构永远完整可消费）。
+    异常: AIScriptError（网络/JSON 解析失败等，由调用方决定整体降级策略）
+    """
+    if not api_key:
+        raise AIScriptError("未配置 DEEPSEEK_API_KEY，请到高级设置里填写")
+    if not segments:
+        return []
+    if not materials:
+        raise AIScriptError("素材清单为空，无法选材")
+
+    # ── 素材清单：控制 token（desc 截断 80 字；超 40 条警告但仍全量传入）──
+    if len(materials) > 40:
+        print(f"  ⚠ 素材 {len(materials)} 条超过 40 条，全量传入（token 较大）")
+    mat_lines = []
+    for m in materials:
+        desc = (m.get("desc") or "").strip()[:80]
+        dur = m.get("duration_sec") or 0
+        theme = m.get("theme") or m.get("topic") or ""
+        fname = m["name"] + os.path.splitext(m["path"])[1]
+        mat_lines.append(
+            f"- {fname} | 目录: {theme} | 时长: {dur:.0f}s | 画面: {desc or '无描述'}")
+
+    seg_lines = "\n".join(f"[{s['index']}] {s['text']}" for s in segments)
+    mat_info = "\n".join(mat_lines)
+
+    system = (
+        "你是一位短视频画面选材编辑，负责为口播稿挑选最贴合的素材视频片段。\n"
+        "匹配依据是【语义】——画面内容与稿子内容对得上即可，不靠任何固定词表\n"
+        "（历史、商品、美食等任何题材都是同一套逻辑）。\n"
+        "素材信息 = 文件名 + 所在目录 + 时长 + 画面描述；重点参考画面描述和目录名。\n"
+        "规则：\n"
+        "1. 每条素材最多用 1 次（除非素材条数少于段落数，允许循环复用）；\n"
+        "2. 不要推荐时长明显短于段落音频时长的素材（会截不够）；\n"
+        "3. clip_start 建议截取起点（秒）：避开素材开头突兀处，\n"
+        "   可在 0 到 max(0, 素材时长-预估段落时长) 之间取合理值；\n"
+        "4. 每段必须推荐，且推荐理由一句话说清画面与内容的对应关系。\n"
+        "严格只输出 JSON 数组，不要输出任何其他文字。"
+    )
+    user = (
+        "稿子段落（段落即一个画面单位，每段推荐一条素材）：\n"
+        + seg_lines
+        + "\n\n可选素材清单：\n"
+        + mat_info
+        + "\n\n输出 JSON 数组："
+        '[{"index": 0, "material": "文件名.mp4", "clip_start": 0, "reason": "一句话理由"}, ...]'
+    )
+
+    content = _call_qwen(system, user, api_key)
+    data = _extract_json(content)
+    if isinstance(data, dict):
+        for _k in ("plan", "selections", "items", "results"):
+            if isinstance(data.get(_k), list):
+                data = data[_k]
+                break
+    if not isinstance(data, list):
+        raise AIScriptError("AI 选材返回格式不对（应为 JSON 数组）", raw=content)
+
+    # ── 素材名索引（name / name+扩展名 / 完整文件名 都能匹配）──
+    by_name = {}
+    for m in materials:
+        fname = m["name"] + os.path.splitext(m["path"])[1]
+        by_name[m["name"]] = m
+        by_name[fname] = m
+        by_name[os.path.basename(m["path"])] = m
+
+    # 逐段兜底：缺 material / 找不到 / 时长不足 → 从未分配素材按顺序补，用完循环
+    assigned = set()
+    fallback_idx = 0
+    plan = []
+    for seg in segments:
+        idx = seg["index"]
+        item = None
+        for cand in data:
+            if isinstance(cand, dict) and cand.get("index") == idx:
+                item = cand
+                break
+        material_name = (item or {}).get("material") or ""
+        mat = by_name.get(str(material_name).strip())
+
+        if mat is None:
+            # 单段兜底：顺序取未分配素材
+            mat, fallback_idx = _fallback_pick(materials, assigned, fallback_idx)
+            if material_name:
+                print(f"  ⚠ 段 {idx} 推荐素材「{material_name}」不在清单，改用 {mat['name']}")
+            else:
+                print(f"  ⚠ 段 {idx} 未推荐素材，兜底用 {mat['name']}")
+            reason = (item or {}).get("reason") or "兜底分配"
+        else:
+            assigned.add(mat["name"])
+            reason = (item or {}).get("reason") or ""
+
+        try:
+            clip_start = float((item or {}).get("clip_start") or 0)
+        except (TypeError, ValueError):
+            clip_start = 0.0
+        clip_start = max(0.0, clip_start)
+        # 起点不超出素材可截范围（至少留 1s）
+        avail = (mat.get("duration_sec") or 0) - 1.0
+        if clip_start > max(0.0, avail):
+            clip_start = 0.0
+
+        plan.append({
+            "index": idx,
+            "text": seg["text"],
+            "material": os.path.basename(mat["path"]),
+            "material_path": mat["path"],
+            "clip_start": round(clip_start, 2),
+            "reason": reason,
+        })
+    return plan
+
+
+def _fallback_pick(materials: list, assigned: set, fallback_idx: int):
+    """从未分配素材按顺序取，全用完则从头循环"""
+    n = len(materials)
+    for _ in range(n):
+        m = materials[fallback_idx % n]
+        fallback_idx += 1
+        if m["name"] not in assigned:
+            assigned.add(m["name"])
+            return m, fallback_idx
+    # 全用完：从头循环（不强制唯一）
+    m = materials[fallback_idx % n]
+    fallback_idx += 1
+    return m, fallback_idx

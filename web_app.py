@@ -269,6 +269,39 @@ def read_script(path):
     return title, body
 
 
+def resolve_script_text(script):
+    """script 三选一：稿子文本 / 文件路径 / 投递目录路径（目录内找 script.txt/稿子.txt/第一个 txt）"""
+    s = os.path.expanduser((script or "").strip())
+    if os.path.isdir(s):
+        d = Path(s)
+        cand = []
+        for p in sorted(d.iterdir()):
+            if p.name.lower() in ("script.txt", "稿子.txt", "script.md"):
+                cand.insert(0, p)
+            elif p.suffix.lower() in (".txt", ".md"):
+                cand.append(p)
+        if cand:
+            _t, body = read_script(cand[0])
+            return body
+        return None
+    if os.path.isfile(s):
+        _t, body = read_script(s)
+        return body
+    return script  # 视为稿子文本
+
+
+def _get_env_key(prefix: str) -> str:
+    """读 .env 里的 key（os.environ 已加载则直接用）"""
+    if os.environ.get(prefix):
+        return os.environ[prefix]
+    env_path = BASE_DIR / ".env"
+    if env_path.exists():
+        for ln in env_path.read_text(encoding="utf-8").splitlines():
+            if ln.strip().startswith(prefix):
+                return ln.split("=", 1)[-1].strip()
+    return ""
+
+
 def run_pipeline(params):
     """后台线程跑流水线"""
     TASK.update({"running": True, "logs": [], "step": "准备中",
@@ -645,10 +678,102 @@ class Handler(BaseHTTPRequestHandler):
             save_cfg(cfg)
             return self._json({"ok": True})
 
+        if u.path == "/api/material-plan":
+            """GL-20260814-03：AI 选材预览（不写 episode、不触发流水线）
+            body: {script, 素材库?}  script 支持文本/文件路径/投递目录（同 /api/render）
+            返回: {ok, plan: [{index,text,material,clip_start,reason,duration_sec,desc,theme}],
+                   素材库, degraded, pool_sec, estimate_sec}
+            """
+            script = data.get("script") or ""
+            if not isinstance(script, str) or not script.strip():
+                return self._json({"ok": False, "error": "script 不能为空（文本/文件路径/目录路径）"})
+            body = resolve_script_text(script)
+            if not body or not body.strip():
+                return self._json({"ok": False, "error": "无法解析稿子（目录里没找到 script.txt/稿子.txt）"})
+            video_lib = (data.get("素材库") or data.get("video_dir")
+                         or data.get("library") or "")
+            if not video_lib:
+                video_lib = load_cfg().get("video_source", {}).get(
+                    "root", "~/历史说素材/视频/")
+            video_lib = os.path.expanduser(video_lib)
+
+            try:
+                from lib.material_scanner import scan_material
+                from lib.script_seg import split_segments
+                from lib.ai_script_gen import recommend_material, AIScriptError
+
+                materials = scan_material(video_lib)
+                if not materials:
+                    return self._json({"ok": False,
+                                       "error": f"素材库为空或素材不可用：{video_lib}"})
+                segments = split_segments(body)
+                if not segments:
+                    return self._json({"ok": False, "error": "稿子为空，无法分段"})
+
+                api_key = _get_env_key("DEEPSEEK_API_KEY")
+                if not api_key:
+                    return self._json({"ok": False,
+                                       "error": "未配置 DEEPSEEK_API_KEY，请到高级设置里填写"})
+
+                degraded = False
+                try:
+                    plan = recommend_material(segments, materials, api_key)
+                except AIScriptError as e:
+                    degraded = True
+                    # 降级：顺序轮播（AI 失败不阻塞预览）
+                    plan = []
+                    for i, s in enumerate(segments):
+                        m = materials[i % len(materials)]
+                        plan.append({
+                            "index": s["index"], "text": s["text"],
+                            "material": os.path.basename(m["path"]),
+                            "material_path": m["path"],
+                            "clip_start": 0.0,
+                            "reason": f"顺序轮播（AI 选材失败：{e}）",
+                        })
+
+                # 附素材信息供界面显示
+                by_name = {}
+                for m in materials:
+                    by_name[m["name"]] = m
+                    by_name[os.path.basename(m["path"])] = m
+                for p in plan:
+                    mat = by_name.get(os.path.basename(str(p.get("material") or "")))
+                    if mat:
+                        p["duration_sec"] = mat.get("duration_sec") or 0
+                        p["desc"] = mat.get("desc") or ""
+                        p["theme"] = mat.get("theme") or mat.get("topic") or ""
+                    else:
+                        p["duration_sec"] = 0
+                        p["desc"] = ""
+                        p["theme"] = ""
+
+                pool_sec = sum(m.get("duration_sec") or 0 for m in materials)
+                estimate_sec = round(count_han(body) / 250.0 * 60, 1)
+                # 素材池简要列表（界面「换素材」下拉用）
+                pool = [{
+                    "name": os.path.basename(m["path"]),
+                    "duration_sec": m.get("duration_sec") or 0,
+                    "desc": (m.get("desc") or "")[:80],
+                    "theme": m.get("theme") or m.get("topic") or "",
+                } for m in materials]
+                return self._json({
+                    "ok": True,
+                    "plan": plan,
+                    "素材库": video_lib,
+                    "degraded": degraded,
+                    "pool_sec": pool_sec,
+                    "estimate_sec": estimate_sec,
+                    "pool": pool,
+                })
+            except Exception as e:
+                return self._json({"ok": False, "error": str(e)})
+
         if u.path == "/api/render":
-            """SDK：投稿子出片（GL-20260814-02）
-            body: {script, 素材库?, title?, duration?, name?}
+            """SDK：投稿子出片（GL-20260814-02/03）
+            body: {script, 素材库?, title?, duration?, name?, material_plan?}
             script 三选一：稿子文本 / 文件路径 / 投递目录路径（目录内找 script.txt 或第一个 .txt）
+            material_plan（可选）：预览确认后的选材计划，传入则写入 episode 目录直接消费
             """
             if TASK["running"]:
                 return self._json({"ok": False,
@@ -657,23 +782,7 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(script, str) or not script.strip():
                 return self._json({"ok": False, "msg": "script 不能为空（文本/文件路径/目录路径）"})
 
-            # 解析 script：目录 → 文件 → 纯文本
-            body = None
-            s = os.path.expanduser(script.strip())
-            if os.path.isdir(s):
-                d = Path(s)
-                cand = []
-                for p in sorted(d.iterdir()):
-                    if p.name.lower() in ("script.txt", "稿子.txt", "script.md"):
-                        cand.insert(0, p)
-                    elif p.suffix.lower() in (".txt", ".md"):
-                        cand.append(p)
-                if cand:
-                    _t, body = read_script(cand[0])
-            elif os.path.isfile(s):
-                _t, body = read_script(s)
-            else:
-                body = script  # 视为稿子文本
+            body = resolve_script_text(script)
             if not body or not body.strip():
                 return self._json({"ok": False, "msg": "无法解析稿子（目录里没找到 script.txt/稿子.txt）"})
 
@@ -682,6 +791,18 @@ class Handler(BaseHTTPRequestHandler):
             ep_dir = BASE_DIR / "episodes" / episode
             ep_dir.mkdir(parents=True, exist_ok=True)
             (ep_dir / "script.txt").write_text(body, encoding="utf-8")
+
+            # GL-20260814-03：预览确认后的选材计划 → 写入 material_plan.json（跳过内部 AI 选材）
+            mp = data.get("material_plan")
+            if mp and isinstance(mp, list) and mp:
+                try:
+                    (ep_dir / "material_plan.json").write_text(
+                        json.dumps(mp, ensure_ascii=False, indent=1),
+                        encoding="utf-8")
+                    log(f"✓ 使用预览确认的选材计划：{len(mp)} 段")
+                except Exception as e:
+                    return self._json({"ok": False, "msg": f"选材计划写入失败：{e}"})
+
 
             # 素材库：素材库字段（中文）或 video_dir / library 别名
             video_lib = (data.get("素材库") or data.get("video_dir")

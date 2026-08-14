@@ -318,14 +318,16 @@ def step_mix(episode_dir: str, tts_result: dict, img_result: dict, cfg: dict) ->
 
 
 def _video_step_mix(episode_dir: str, tts_result: dict, cfg: dict) -> str:
-    """视频模式混剪：素材按顺序轮播截取 → concat → 复用后处理（混音/字幕/片头/编码）。
+    """视频模式混剪（GL-20260814-03：AI 智能选材版）。
 
-    素材目录 = cfg.video_source.root（run.py --video-dir 或 CLI/API 传入）。
-    第一步不做段落切分：全片按整段音频均分到素材上（AI 选材是第二步）。
-    素材不足（无素材 / 总时长 < 音频）→ 明确报错，不静默。
+    段落即选材单位：稿子分段 → 段落音频时长（subs.srt 聚合）→
+    选材计划（material_plan.json 已有则直接消费，否则内部调 AI 语义选材，
+    失败降级顺序轮播）→ 逐段截取（clip_dur=段音频+0.5s 转场余量）→
+    concat → 复用后处理（混音/字幕/片头/编码）。
+    素材不足（无素材 / 池总时长 < 音频）→ 明确报错，不静默。
     """
     print(f"\n{'='*60}")
-    print("STEP 3: 混剪合成（视频模式）")
+    print("STEP 3: 混剪合成（视频模式·AI选材）")
     print(f"{'='*60}")
 
     audio_path = tts_result["audio_path"]
@@ -340,7 +342,22 @@ def _video_step_mix(episode_dir: str, tts_result: dict, cfg: dict) -> str:
     height = video_cfg.get("height", 1920)
     fps = video_cfg.get("fps", 25)
 
-    # ── 3v1. 素材清单（按顺序轮播，不选材）──
+    # ── 3v1. 段落切分 + 段落音频时长 ──
+    from script_seg import split_segments, segment_audio_durations
+    script_path = os.path.join(episode_dir, "script.txt")
+    with open(script_path, encoding="utf-8") as f:
+        body = f.read()
+    segments = split_segments(body)
+    if not segments:
+        raise RuntimeError("稿子为空，无法分段")
+    seg_durs = segment_audio_durations(segments, subs_srt)
+    if len(seg_durs) != len(segments):
+        seg_durs = [audio_dur / len(segments)] * len(segments)
+    print(f"\n  段落: {len(segments)} 段")
+    for s, d in zip(segments, seg_durs):
+        print(f"    [{s['index']}] {_time_str(d)} | {s['text'][:26]}…")
+
+    # ── 3v2. 素材清单 + 池时长校验 ──
     from material_scanner import scan_material
     lib_root = os.path.expanduser(vs_cfg.get("root", "~/历史说素材/视频/"))
     materials = scan_material(lib_root)
@@ -348,7 +365,6 @@ def _video_step_mix(episode_dir: str, tts_result: dict, cfg: dict) -> str:
         raise RuntimeError(
             f"该题材缺素材：{lib_root} 下没有可用视频素材\n"
             f"请把素材按「题材/主题_编号.mp4」放进素材库（详见 使用说明.md）")
-
     total_dur = sum(m["duration_sec"] for m in materials)
     print(f"\n  可用素材: {len(materials)} 条 (总时长 {_time_str(total_dur)})")
     print(f"  音频时长: {_time_str(audio_dur)}")
@@ -357,35 +373,130 @@ def _video_step_mix(episode_dir: str, tts_result: dict, cfg: dict) -> str:
             f"素材总时长不足：素材 {total_dur:.0f}s < 音频 {audio_dur:.0f}s。\n"
             f"请补充素材或缩短稿子（每个题材池建议总时长 ≥ 10 分钟）")
 
-    # ── 3v2. 时间分配：每段 = 音频 / N ──
-    n = len(materials)
-    base_duration = audio_dur / n
-    print(f"\n  时间分配 ({n} 条素材, 每段 {_time_str(base_duration)}):")
+    # ── 3v3. 选材计划（material_plan.json 已有→直接消费；否则 AI 选材/降级轮播）──
+    plan = _resolve_video_plan(episode_dir, segments, materials)
+    print(f"\n  选材计划 ({len(plan)} 段):")
+    for p in plan:
+        print(f"    [{p['index']}] {p['material']} @{p['clip_start']}s | "
+              f"{(p.get('reason') or '')[:32]}")
 
-    # ── 3v3. 逐条截取（本轮从头部开始截）──
+    # ── 3v4. 逐段截取（clip_dur = 段音频时长 + 0.5s 转场余量）──
     print(f"\n  截取视频片段...")
     clip_paths = []
-    for i, m in enumerate(materials):
+    for i, p in enumerate(plan):
+        mat = _material_by_name(materials, p.get("material") or "") \
+            or _material_by_path(materials, p.get("material_path") or "")
+        if mat is None:
+            raise RuntimeError(f"选材计划中的素材不存在: {p.get('material')}")
+        clip_dur = seg_durs[p["index"]] + 0.5
+        start = float(p.get("clip_start") or 0)
+        avail = mat["duration_sec"]
+        # 时长校验：起点+时长超出素材 → 起点回退 0；仍超 → 按素材全长截+警告
+        if start + clip_dur > avail:
+            start = 0.0
+            print(f"    ⚠ 段 {p['index']}: 起点+时长超出素材"
+                  f"({clip_dur:.1f}s>{avail:.1f}s)，起点回退 0")
+        if clip_dur > avail:
+            clip_dur = avail
+            print(f"    ⚠ 段 {p['index']}: 段落时长超过素材全长，"
+                  f"按全长 {avail:.1f}s 截取（画面会提前切走）")
         clip_out = os.path.join(clips_dir, f"clip_{i+1:03d}.mp4")
-        print(f"  [{i+1}/{n}] {Path(m['path']).name} "
-              f"({m['duration_sec']}s {m['width']}x{m['height']})")
+        print(f"  [{i+1}/{len(plan)}] {mat['name']} "
+              f"{_time_str(clip_dur)} @{start:.1f}s")
         build_video_clip(
-            video_path=m["path"],
+            video_path=mat["path"],
             output_path=clip_out,
-            start=0.0,
-            duration=base_duration,
+            start=start,
+            duration=clip_dur,
             width=width, height=height, fps=fps,
             cfg=cfg,
         )
         clip_paths.append(clip_out)
 
-    # ── 3v4. 拼接（concat 硬切，不走 xfade）──
+    # ── 3v5. 拼接（concat 硬切，不走 xfade）──
     merged_video = os.path.join(episode_dir, "_merged_video.mp4")
     print(f"\n  拼接 clips (concat 硬切)...")
     concat_clips(clip_paths=clip_paths, output_path=merged_video)
 
-    # ── 3v5. 复用后处理：混音 → 字幕 → 片头 → 编码 ──
+    # ── 3v6. 复用后处理：混音 → 字幕 → 片头 → 编码 ──
     return _post_mix(episode_dir, merged_video, tts_result, cfg)
+
+
+def _resolve_video_plan(episode_dir: str, segments: list, materials: list) -> list:
+    """选材计划：material_plan.json 已有 → 直接消费（预览确认路径）；
+    否则内部调 AI 选材（失败降级顺序轮播）。计划永远写回文件保证可消费。"""
+    plan_path = os.path.join(episode_dir, "material_plan.json")
+    if os.path.exists(plan_path):
+        try:
+            plan = json.load(open(plan_path, encoding="utf-8"))
+            if isinstance(plan, list) and plan:
+                print("  选材计划: 使用 material_plan.json（预览确认路径）")
+                for p in plan:
+                    if not p.get("text"):
+                        for s in segments:
+                            if s["index"] == p.get("index"):
+                                p["text"] = s["text"]
+                                break
+                    if not p.get("material_path"):
+                        m = _material_by_name(materials, p.get("material") or "")
+                        if m:
+                            p["material_path"] = m["path"]
+                return plan
+        except Exception as e:
+            print(f"  ⚠ material_plan.json 读取失败（{e}），重新选材")
+
+    from ai_script_gen import recommend_material
+    api_key = os.environ.get("DEEPSEEK_API_KEY", "")
+    try:
+        plan = recommend_material(segments, materials, api_key)
+        print(f"  ✓ AI 选材完成: {len(plan)} 段")
+    except Exception as e:
+        print(f"  ⚠ AI 选材失败（{e}），降级为顺序轮播")
+        plan = _fallback_video_plan(segments, materials)
+    try:
+        with open(plan_path, "w", encoding="utf-8") as f:
+            json.dump(plan, f, ensure_ascii=False, indent=1)
+    except Exception:
+        pass
+    return plan
+
+
+def _fallback_video_plan(segments: list, materials: list) -> list:
+    """降级：按顺序轮播分配（每段一条，用完循环）"""
+    plan = []
+    for i, s in enumerate(segments):
+        m = materials[i % len(materials)]
+        plan.append({
+            "index": s["index"],
+            "text": s["text"],
+            "material": os.path.basename(m["path"]),
+            "material_path": m["path"],
+            "clip_start": 0.0,
+            "reason": "顺序轮播（AI 选材不可用）",
+        })
+    return plan
+
+
+def _material_by_name(materials: list, name: str):
+    """按文件名/去掉扩展名的名字找素材"""
+    if not name:
+        return None
+    name = os.path.basename(str(name))
+    for m in materials:
+        if m["name"] == name or os.path.basename(m["path"]) == name:
+            return m
+    return None
+
+
+def _material_by_path(materials: list, path: str):
+    """按绝对路径找素材"""
+    if not path:
+        return None
+    p = os.path.abspath(str(path))
+    for m in materials:
+        if os.path.abspath(m["path"]) == p:
+            return m
+    return None
 
 
 def _post_mix(episode_dir: str, merged_video: str, tts_result: dict, cfg: dict) -> str:
@@ -497,9 +608,27 @@ def cleanup(episode_dir: str, cfg: dict):
 
 # ─────────── 主入口 ───────────
 
+def _load_env_if_exists():
+    """加载 .env 到环境变量（不覆盖已存在的），供 AI 出稿/选材/生图子进程使用"""
+    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    try:
+        if os.path.exists(env_path):
+            for ln in open(env_path, encoding="utf-8").read().splitlines():
+                ln = ln.strip()
+                if ln and not ln.startswith("#") and "=" in ln:
+                    _k, _v = ln.split("=", 1)
+                    _k = _k.strip()
+                    if _k and _k not in os.environ:
+                        os.environ[_k] = _v.strip()
+    except Exception:
+        pass
+
+
 def main():
     import argparse
     from concurrent.futures import ThreadPoolExecutor
+
+    _load_env_if_exists()
 
     parser = argparse.ArgumentParser(description="文史长音频自动化流水线")
     parser.add_argument("--episode", "-e", default="001", help="期号 (默认: 001)")
