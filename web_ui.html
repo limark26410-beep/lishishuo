@@ -188,6 +188,21 @@
       <div class="hint">选了题材只在该题材目录里轮播；留空=整个素材库轮播</div>
     </div>
 
+    <!-- GL-20260814-04：投递目录自动出片 -->
+    <div class="row">
+      <label>投递目录</label>
+      <div class="flex">
+        <label style="display:flex;align-items:center;gap:6px;margin-right:8px">
+          <input type="checkbox" id="db_enabled"> 开启自动出片
+        </label>
+        <input type="text" id="db_watch" value="~/历史说素材/投递" style="flex:1" placeholder="投递目录">
+        <input type="text" id="db_out" value="~/历史说素材/成片" style="flex:1;margin-left:6px" placeholder="成片输出目录">
+        <button class="ghost" onclick="saveDropbox()" style="margin-left:8px">保存</button>
+      </div>
+      <div class="hint">外部工具把稿子丢进投递目录（一级子目录名=题材，如 历史/李白.txt），自动出片到成片目录；处理中/成功/失败分别进 _processing/_done/_failed</div>
+      <div id="dbRecent" style="margin-top:8px"></div>
+    </div>
+
     <details>
       <summary>⚙ 高级设置(一般不用改)</summary>
       <div style="margin-top:14px;padding:14px;background:#100d09;border:1px solid #342d24;border-radius:6px">
@@ -336,7 +351,46 @@ async function loadCfg(){
     }
   }catch(e){}
 }
-window.addEventListener('load', async ()=>{ await loadVoices(); await loadCfg(); loadKeyStatus(); await loadVideoTopics(); });
+window.addEventListener('load', async ()=>{ await loadVoices(); await loadCfg(); loadKeyStatus(); await loadVideoTopics(); loadDropbox(); });
+
+async function loadDropbox(){
+  try{
+    const r = await (await fetch('/api/dropbox')).json();
+    $('db_enabled').checked = !!r.enabled;
+    if(r.watch_dir) $('db_watch').value = r.watch_dir;
+    if(r.out_dir) $('db_out').value = r.out_dir;
+    const box = $('dbRecent');
+    box.innerHTML = '';
+    if(!r.recent || !r.recent.length){ box.innerHTML = '<span class="hint">暂无处理记录</span>'; return; }
+    r.recent.forEach(rec => {
+      const d = document.createElement('div');
+      d.style.cssText = 'font-size:12px;padding:3px 0;border-bottom:1px dashed #2a2419;display:flex;gap:8px;align-items:center;';
+      const tag = rec.status === 'done' ? '✓' : (rec.status === 'failed' ? '✗' : '…');
+      const color = rec.status === 'done' ? '#67c23a' : (rec.status === 'failed' ? '#e74c3c' : '#e6a23c');
+      d.innerHTML = '<span style="color:' + color + '">' + tag + '</span> ' +
+        '<b>' + escHtml(rec.name) + '</b>' +
+        (rec.topic ? '<span class="hint">(' + escHtml(rec.topic) + ')</span>' : '') +
+        '<span class="hint">' + (rec.time||'') + '</span>' +
+        (rec.output ? '<a href="' + rec.output + '" target="_blank" style="color:#d4af37">成片</a>' : '') +
+        (rec.error ? '<span class="hint" style="color:#e74c3c">' + escHtml(rec.error.slice(0,40)) + '</span>' : '');
+      box.appendChild(d);
+    });
+  }catch(e){}
+}
+
+async function saveDropbox(){
+  const r = await post('/api/dropbox', {
+    enabled: $('db_enabled').checked,
+    watch_dir: $('db_watch').value.trim(),
+    out_dir: $('db_out').value.trim(),
+  });
+  if(r.ok){
+    alert(r.enabled ? '✅ 投递目录已开启，新稿子丢进目录即自动出片' : '投递目录已关闭');
+    loadDropbox();
+  } else {
+    alert('保存失败：' + (r.msg || '未知错误'));
+  }
+}
 
 function toggleImg(){
   const v = document.querySelector('input[name=imgsrc]:checked').value;

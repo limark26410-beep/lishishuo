@@ -17,11 +17,14 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 VIDEO_EXTS = (".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v")
 CACHE_NAME = "_scan_cache.json"
+_CACHE_LOCK = threading.Lock()  # 写缓存加锁（watcher 与预览可能并发）
 
 
 def _ffprobe_info(path: str) -> dict:
@@ -184,12 +187,15 @@ def scan_material(library_root: str, max_workers: int = 4) -> list:
                 m.update(info)
         materials = [m for m in materials if m.get("duration_sec")]
 
-    # 写缓存
+    # 写缓存（加锁 + 原子写，避免并发半写文件）
     try:
-        cache_path.write_text(
-            json.dumps({"mtime_key": mtime_key, "materials": materials},
-                       ensure_ascii=False, indent=1),
-            encoding="utf-8")
+        with _CACHE_LOCK:
+            _tmp = cache_path.with_suffix(".json.tmp")
+            _tmp.write_text(
+                json.dumps({"mtime_key": mtime_key, "materials": materials},
+                           ensure_ascii=False, indent=1),
+                encoding="utf-8")
+            _tmp.replace(cache_path)
     except Exception:
         pass
 

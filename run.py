@@ -338,6 +338,7 @@ def _video_step_mix(episode_dir: str, tts_result: dict, cfg: dict) -> str:
 
     video_cfg = cfg.get("video", {})
     vs_cfg = cfg.get("video_source", {})
+    xfade_cfg = video_cfg.get("xfade", {})
     width = video_cfg.get("width", 1080)
     height = video_cfg.get("height", 1920)
     fps = video_cfg.get("fps", 25)
@@ -380,15 +381,34 @@ def _video_step_mix(episode_dir: str, tts_result: dict, cfg: dict) -> str:
         print(f"    [{p['index']}] {p['material']} @{p['clip_start']}s | "
               f"{(p.get('reason') or '')[:32]}")
 
-    # ── 3v4. 逐段截取（clip_dur = 段音频时长 + 0.5s 转场余量）──
+    # ── 3v4. 逐段截取（clip_dur = 段音频时长 + 转场余量；xfade 时余量=xfade_dur）──
     print(f"\n  截取视频片段...")
     clip_paths = []
+    # xfade 模式下每段多截 xfade_dur（重叠区消耗），最后一段不加余量（后面无转场）
+    if video_cfg.get("transition", "concat") == "xfade":
+        _xfade_dur = float(xfade_cfg.get("duration", 1.0))
+        _tail_dur = 0.0
+    else:
+        _xfade_dur = 0.5
+        _tail_dur = 0.5
     for i, p in enumerate(plan):
+        # GL-20260814-04 越界防御：外部手拼 plan 的 index 越界/缺失 → 跳过该段不截取
+        idx = p.get("index")
+        try:
+            idx = int(idx)
+        except (TypeError, ValueError):
+            idx = -1
+        if idx < 0 or idx >= len(seg_durs):
+            print(f"  ⚠ 选材计划段 index 越界/缺失（{p.get('index')}），跳过该段不截取")
+            continue
         mat = _material_by_name(materials, p.get("material") or "") \
             or _material_by_path(materials, p.get("material_path") or "")
         if mat is None:
-            raise RuntimeError(f"选材计划中的素材不存在: {p.get('material')}")
-        clip_dur = seg_durs[p["index"]] + 0.5
+            # 素材找不到：顺序补一条（复用兜底逻辑），不中断
+            mat = materials[i % len(materials)]
+            print(f"  ⚠ 选材计划素材不存在: {p.get('material')}，顺序补用 {mat['name']}")
+        is_last = (i == len(plan) - 1)
+        clip_dur = seg_durs[idx] + (_tail_dur if is_last else _xfade_dur)
         start = float(p.get("clip_start") or 0)
         avail = mat["duration_sec"]
         # 时长校验：起点+时长超出素材 → 起点回退 0；仍超 → 按素材全长截+警告
@@ -413,10 +433,21 @@ def _video_step_mix(episode_dir: str, tts_result: dict, cfg: dict) -> str:
         )
         clip_paths.append(clip_out)
 
-    # ── 3v5. 拼接（concat 硬切，不走 xfade）──
+    # ── 3v5. 拼接（concat 硬切 / xfade 交叉溶解，读 video.transition）──
     merged_video = os.path.join(episode_dir, "_merged_video.mp4")
-    print(f"\n  拼接 clips (concat 硬切)...")
-    concat_clips(clip_paths=clip_paths, output_path=merged_video)
+    if video_cfg.get("transition", "concat") == "xfade":
+        print(f"\n  拼接 clips (xfade 交叉溶解)...")
+        xfade_concat(
+            clip_paths=clip_paths,
+            output_path=merged_video,
+            cfg=cfg,
+            transition=xfade_cfg.get("transition", "fade"),
+            duration=float(xfade_cfg.get("duration", 1.0)),
+            fps=fps,
+        )
+    else:
+        print(f"\n  拼接 clips (concat 硬切)...")
+        concat_clips(clip_paths=clip_paths, output_path=merged_video)
 
     # ── 3v6. 复用后处理：混音 → 字幕 → 片头 → 编码 ──
     return _post_mix(episode_dir, merged_video, tts_result, cfg)

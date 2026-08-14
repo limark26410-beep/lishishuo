@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -373,7 +374,9 @@ def run_pipeline(params):
             TASK["step"] = "已停止"
             return
         if proc.returncode != 0:
-            raise RuntimeError(f"流水线退出码 {proc.returncode}")
+            # 失败原因带上流水线最后几行日志（如「该题材缺素材」），供投递 _failed 归档
+            tail = "\n".join(TASK["logs"][-6:])
+            raise RuntimeError(f"流水线退出码 {proc.returncode}\n{tail}")
 
         TASK["result_dir"] = str(ep_dir)
         TASK["progress"] = 100
@@ -386,6 +389,189 @@ def run_pipeline(params):
         TASK["running"] = False
         TASK["done"] = True
         TASK["proc"] = None
+
+
+# ════════════ 投递目录自动出片（GL-20260814-04）════════════
+
+DROP_RECENT = []          # 最近处理记录 [{name, topic, status, time, output, error}]
+DROP_LOCK = threading.Lock()
+
+
+def _dropbox_cfg() -> dict:
+    """读 config 的 dropbox 段（带默认值）"""
+    d = load_cfg().get("dropbox", {}) or {}
+    return {
+        "enabled": bool(d.get("enabled", False)),
+        "watch_dir": d.get("watch_dir", "~/历史说素材/投递/"),
+        "out_dir": d.get("out_dir", "~/历史说素材/成片/"),
+        "interval_sec": int(d.get("interval_sec", 5)),
+        "series": d.get("series", ""),
+    }
+
+
+def _drop_record(rec: dict):
+    with DROP_LOCK:
+        DROP_RECENT.insert(0, rec)
+        del DROP_RECENT[20:]
+
+
+def _discover_drop_items(watch_dir: str) -> list:
+    """扫投递目录，返回待处理单元。
+    形态：单文件 xxx.txt / 文件夹（含 script.txt）；一级子目录名=题材。
+    """
+    wd = Path(os.path.expanduser(watch_dir))
+    if not wd.is_dir():
+        return []
+    items = []
+    for p in sorted(wd.iterdir()):
+        if p.name.startswith("_"):
+            continue
+        if p.is_dir():
+            topic = p.name
+            for q in sorted(p.iterdir()):
+                if q.name.startswith("_"):
+                    continue
+                if q.is_file() and q.suffix.lower() in (".txt", ".md"):
+                    items.append({"kind": "file", "path": q,
+                                  "name": q.stem, "topic": topic})
+                elif q.is_dir():
+                    items.append({"kind": "dir", "path": q,
+                                  "name": q.name, "topic": topic})
+        elif p.is_file() and p.suffix.lower() in (".txt", ".md"):
+            items.append({"kind": "file", "path": p,
+                          "name": p.stem, "topic": ""})
+    return items
+
+
+def _process_drop_item(item: dict):
+    """处理一个投递单元：移入 _processing（防重复）→ 跑流水线 → 归档/失败"""
+    dcfg = _dropbox_cfg()
+    watch_dir = Path(os.path.expanduser(dcfg["watch_dir"]))
+    out_dir = Path(os.path.expanduser(dcfg["out_dir"]))
+    proc_dir = watch_dir / "_processing"
+    done_dir = watch_dir / "_done"
+    fail_dir = watch_dir / "_failed"
+    for d in (proc_dir, done_dir, fail_dir):
+        d.mkdir(parents=True, exist_ok=True)
+
+    fname = item["path"].name
+    topic = item["topic"]
+    # 防重复：_processing 里已有同名（含时间戳前缀）→ 跳过
+    if any(p.name.endswith(f"_{fname}") for p in proc_dir.iterdir() if p.is_file()):
+        log(f"投递: {fname} 已在处理中，跳过重复触发")
+        return
+
+    # 移入 _processing（时间戳防同名冲突）
+    ts = time.strftime("%Y%m%d%H%M%S")
+    proc_path = proc_dir / f"{ts}_{fname}"
+    try:
+        shutil.move(str(item["path"]), str(proc_path))
+    except Exception as e:
+        log(f"投递: {fname} 移入 _processing 失败: {e}")
+        return
+    log(f"投递: 开始处理 {fname}（题材: {topic or '默认'}）")
+
+    # 读稿（首行视为标题剥离——文件/投递目录行为，见 使用说明.md「稿子格式」）
+    try:
+        if item["kind"] == "dir":
+            title_line = ""
+            body = resolve_script_text(str(proc_path))
+        else:
+            title_line, body = read_script(str(proc_path))
+        if not body or not body.strip():
+            raise RuntimeError("稿子为空或无法解析（文件夹需含 script.txt/稿子.txt）")
+    except Exception as e:
+        _fail_drop_item(proc_path, fail_dir, fname, f"稿子读取失败: {e}")
+        return
+
+    # 素材库：题材 → {video_source.root}/{题材}，否则默认库
+    video_lib = load_cfg().get("video_source", {}).get(
+        "root", "~/历史说素材/视频/")
+    if topic:
+        video_lib = os.path.join(os.path.expanduser(video_lib), topic)
+
+    # 建任务跑流水线（复用 run_pipeline）
+    episode = next_episode_id()
+    ep_dir = BASE_DIR / "episodes" / episode
+    ep_dir.mkdir(parents=True, exist_ok=True)
+    (ep_dir / "script.txt").write_text(body, encoding="utf-8")
+    params = {
+        "episode": episode,
+        "ai_mode": True,
+        "video_dir": video_lib,
+        "name": item["name"],
+        "title": (title_line or "").strip(),
+        "series": dcfg.get("series") or "",
+    }
+    threading.Thread(target=run_pipeline, args=(params,), daemon=True).start()
+
+    # 等待本次任务完成（单任务模型：期间手动任务会被拒）
+    while not TASK["done"]:
+        time.sleep(1)
+
+    if TASK.get("error"):
+        _fail_drop_item(proc_path, fail_dir, fname, TASK["error"])
+        _drop_record({"name": fname, "topic": topic, "status": "failed",
+                      "time": time.strftime("%H:%M:%S"),
+                      "error": TASK["error"][:100]})
+        return
+
+    final = ep_dir / "final.mp4"
+    if not final.exists():
+        _fail_drop_item(proc_path, fail_dir, fname, "流水线完成但未找到 final.mp4")
+        _drop_record({"name": fname, "topic": topic, "status": "failed",
+                      "time": time.strftime("%H:%M:%S"), "error": "无成片"})
+        return
+
+    # 成功：成片拷到 out_dir/{题材或空}/{稿子名}.mp4，原稿归档 _done/YYYYMMDD/
+    out_sub = out_dir / topic if topic else out_dir
+    out_sub.mkdir(parents=True, exist_ok=True)
+    out_mp4 = out_sub / f"{item['name']}.mp4"
+    try:
+        shutil.copy2(final, out_mp4)
+    except Exception as e:
+        _fail_drop_item(proc_path, fail_dir, fname, f"成片拷贝失败: {e}")
+        _drop_record({"name": fname, "topic": topic, "status": "failed",
+                      "time": time.strftime("%H:%M:%S"), "error": "成片拷贝失败"})
+        return
+    day_dir = done_dir / time.strftime("%Y%m%d")
+    day_dir.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(proc_path), str(day_dir / fname))
+    log(f"投递: ✓ {fname} 出片完成 -> {out_mp4}")
+    _drop_record({"name": fname, "topic": topic, "status": "done",
+                  "time": time.strftime("%H:%M:%S"),
+                  "output": str(out_mp4)})
+
+
+def _fail_drop_item(proc_path: Path, fail_dir: Path, fname: str, err: str):
+    """失败归档：原稿移 _failed + 写 .err.txt"""
+    try:
+        shutil.move(str(proc_path), str(fail_dir / fname))
+    except Exception:
+        pass
+    try:
+        (fail_dir / f"{fname}.err.txt").write_text(
+            f"{time.strftime('%Y-%m-%d %H:%M:%S')}\n{err}", encoding="utf-8")
+    except Exception:
+        pass
+    log(f"投递: ✗ {fname} 失败（{err[:80]}），原稿已移 _failed")
+
+
+def _dropbox_watcher():
+    """投递目录轮询线程（daemon，随服务启动）"""
+    while True:
+        try:
+            dcfg = _dropbox_cfg()
+            if dcfg["enabled"] and not TASK["running"]:
+                for item in _discover_drop_items(dcfg["watch_dir"]):
+                    # 处理完一个再扫下一个（每轮最多处理 1 个，避免长时间占任务）
+                    if TASK["running"]:
+                        break
+                    _process_drop_item(item)
+                    break
+        except Exception as e:
+            log(f"投递: watcher 异常: {e}")
+        time.sleep(max(1, int(_dropbox_cfg()["interval_sec"])))
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -471,6 +657,18 @@ class Handler(BaseHTTPRequestHandler):
 
         elif u.path == "/api/config":
             self._json(load_cfg())
+        elif u.path == "/api/dropbox":
+            """GL-20260814-04：投递目录配置 + 最近处理记录"""
+            dcfg = _dropbox_cfg()
+            with DROP_LOCK:
+                recent = list(DROP_RECENT[:10])
+            self._json({
+                "enabled": dcfg["enabled"],
+                "watch_dir": dcfg["watch_dir"],
+                "out_dir": dcfg["out_dir"],
+                "interval_sec": dcfg["interval_sec"],
+                "recent": recent,
+            })
         elif u.path == "/api/video-topics":
             """视频素材库题材列表（video_source.root 下第一级目录名）"""
             try:
@@ -649,6 +847,24 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": False, "msg": "已有任务在跑"})
             threading.Thread(target=run_pipeline, args=(data,), daemon=True).start()
             return self._json({"ok": True})
+
+        if u.path == "/api/dropbox":
+            """GL-20260814-04：改投递目录配置（enabled/watch_dir/out_dir），保存到 config.yaml"""
+            cfg = load_cfg()
+            db = cfg.setdefault("dropbox", {})
+            if "enabled" in data:
+                db["enabled"] = bool(data["enabled"])
+            if data.get("watch_dir"):
+                db["watch_dir"] = data["watch_dir"]
+            if data.get("out_dir"):
+                db["out_dir"] = data["out_dir"]
+            if data.get("interval_sec"):
+                try:
+                    db["interval_sec"] = max(1, int(data["interval_sec"]))
+                except (TypeError, ValueError):
+                    pass
+            save_cfg(cfg)
+            return self._json({"ok": True, **{k: v for k, v in _dropbox_cfg().items()}})
 
         if u.path == "/api/save-config":
             cfg = load_cfg()
@@ -908,6 +1124,13 @@ def main():
             break
         except OSError:
             port += 1
+
+    # GL-20260814-04：投递目录 watcher（daemon，循环内检查 enabled，开关实时生效）
+    try:
+        threading.Thread(target=_dropbox_watcher, daemon=True).start()
+    except Exception:
+        pass
+
     url = f"http://127.0.0.1:{port}"
     print(f"\n{'='*44}")
     print(f"   历史说 · 出片工具  已启动")

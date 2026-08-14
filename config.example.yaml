@@ -24,6 +24,15 @@ video_source:
   # 素材按「题材/主题_编号.mp4」组织，见 使用说明.md
   root: ~/历史说素材/视频/
 
+dropbox:
+  # 投递目录自动出片（第三步）：外部工具把稿子丢进 watch_dir，自动出片到 out_dir
+  # 形态：单文件 xxx.txt / 文件夹（含 script.txt）；一级子目录名=题材（素材库自动选对应题材池）
+  enabled: false        # 默认关，网页「投递目录」卡片里开
+  watch_dir: ~/历史说素材/投递/
+  out_dir: ~/历史说素材/成片/
+  interval_sec: 5       # 轮询间隔（秒）
+  series: ""            # 可选系列名，不配则用期号机制
+
 tts:
   engine: edge-tts
   voice: zh-CN-YunjianNeural
