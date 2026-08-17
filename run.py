@@ -616,12 +616,15 @@ def _post_mix(episode_dir: str, merged_video: str, tts_result: dict, cfg: dict,
         bgm_cfg.get("path", "assets/bgm.mp3"),
     )
     bgm_map = _build_bgm_map(bgm_cfg) if seg_audio else None
+    # GL-20260817-04：分段配乐用 seg_volume（比单 BGM 高，无人声时明显可闻）
+    mix_volume = (bgm_cfg.get("seg_volume", 0.18) if seg_audio
+                  else bgm_cfg.get("volume", 0.12))
     mix_audio(
         video_path=merged_video,
         audio_path=audio_path,
         bgm_path=bgm_path,
         output_path=audio_mixed,
-        bgm_volume=bgm_cfg.get("volume", 0.12),
+        bgm_volume=mix_volume,
         audio_bitrate=enc_cfg.get("audio_bitrate", "192k"),
         seg_audio=seg_audio,
         bgm_map=bgm_map,
