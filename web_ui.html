@@ -115,7 +115,8 @@
       <label>图片来源</label>
       <div class="radio-group">
         <label><input type="radio" name="imgsrc" value="generate" checked onchange="toggleImg()"> 自动生图</label>
-        <label><input type="radio" name="imgsrc" value="local" onchange="toggleImg()"> 本地目录</label>
+        <label><input type="radio" name="imgsrc" value="local" onchange="toggleImg()"> 本地图片</label>
+        <label><input type="radio" name="imgsrc" value="video" onchange="toggleImg()"> 视频素材库</label>
       </div>
       <div id="imgDirBox" style="display:none;margin-top:10px">
         <div class="flex">
@@ -127,6 +128,26 @@
           <input type="checkbox" id="shuffleImg" checked>
           每期打乱图片顺序（多期共用一个文件夹时，避免每期画面重复）
         </label>
+      </div>
+      <!-- GL-20260817-01：视频素材库并进「图片来源」，作为第三个选项显式选择 -->
+      <div id="videoBox" style="display:none;margin-top:10px">
+        <div class="row">
+          <label>视频素材库</label>
+          <div class="flex">
+            <input type="text" id="a_video_root" value="~/历史说素材/视频">
+            <button class="ghost" onclick="pickVideoRoot()">选择目录</button>
+          </div>
+          <div class="hint">视频混剪素材库根目录（视频模式用），素材按「题材/主题_编号.mp4」组织</div>
+        </div>
+        <div class="row" id="videoTopicRow" style="display:none">
+          <label>本期题材</label>
+          <div class="flex">
+            <select id="a_video_topic" style="flex:1">
+              <option value="">全部素材按顺序轮播</option>
+            </select>
+          </div>
+          <div class="hint">选了题材只在该题材目录里轮播；留空=整个素材库轮播</div>
+        </div>
       </div>
     </div>
 
@@ -169,27 +190,8 @@
       <div class="hint">成片、图片、录音、稿子、字幕会分类存进这个目录</div>
     </div>
 
-    <div class="row">
-      <label>视频素材库</label>
-      <div class="flex">
-        <input type="text" id="a_video_root" value="~/历史说素材/视频">
-        <button class="ghost" onclick="pickVideoRoot()">选择目录</button>
-      </div>
-      <div class="hint">视频混剪素材库根目录（视频模式用），素材按「题材/主题_编号.mp4」组织</div>
-    </div>
-
-    <div class="row" id="videoTopicRow" style="display:none">
-      <label>本期题材</label>
-      <div class="flex">
-        <select id="a_video_topic" style="flex:1">
-          <option value="">全部素材按顺序轮播</option>
-        </select>
-      </div>
-      <div class="hint">选了题材只在该题材目录里轮播；留空=整个素材库轮播</div>
-    </div>
-
-    <!-- GL-20260814-04：投递目录自动出片 -->
-    <div class="row">
+    <!-- GL-20260814-04：投递目录自动出片（GL-20260817-01：暂隐藏，待外部流程融合测试通过再放出） -->
+    <div class="row" style="display:none">
       <label>投递目录</label>
       <div class="flex">
         <label style="display:flex;align-items:center;gap:6px;margin-right:8px">
@@ -351,7 +353,7 @@ async function loadCfg(){
     }
   }catch(e){}
 }
-window.addEventListener('load', async ()=>{ await loadVoices(); await loadCfg(); loadKeyStatus(); await loadVideoTopics(); loadDropbox(); });
+window.addEventListener('load', async ()=>{ await loadVoices(); await loadCfg(); loadKeyStatus(); await loadVideoTopics(); loadDropbox(); toggleImg(); }); // GL-20260817-01：初始按默认「自动生图」确保 videoBox 隐藏
 
 async function loadDropbox(){
   try{
@@ -395,6 +397,7 @@ async function saveDropbox(){
 function toggleImg(){
   const v = document.querySelector('input[name=imgsrc]:checked').value;
   $('imgDirBox').style.display = v === 'local' ? 'block' : 'none';
+  $('videoBox').style.display = v === 'video' ? 'block' : 'none'; // GL-20260817-01：视频素材库显式三选一
 }
 
 async function post(url, data){
@@ -745,15 +748,15 @@ async function start(){
     series: $('series').value.trim(),
     title_bg: $('titlebg').value.trim(),
   };
-  if(document.querySelector('input[name=imgsrc]:checked').value === 'local'){
+  // GL-20260817-01：图片来源三选一显式分支（消除隐式触发）
+  const src = document.querySelector('input[name=imgsrc]:checked').value;
+  if(src === 'local'){
     params.images_dir = $('imgdir').value.trim();
     params.shuffle_images = $('shuffleImg').checked;
-  }
-  // 视频模式：选了题材 → 素材库 = 根目录/题材
-  const topic = $('a_video_topic') ? $('a_video_topic').value : '';
-  if(topic){
+  } else if(src === 'video'){
+    const topic = $('a_video_topic') ? $('a_video_topic').value : '';
     const root = ($('a_video_root').value || '').trim().replace(/[\\/]+$/, '');
-    params.video_dir = root + '/' + topic;
+    params.video_dir = topic ? root + '/' + topic : root; // 题材留空=整个素材库轮播
   }
   if(!params.episode || !params.script_path){
     alert('请填期号和稿子路径'); return;
