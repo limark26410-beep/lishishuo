@@ -345,7 +345,7 @@ def mix_audio(
                 "-i", seg_v, "-i", bgm,
                 "-filter_complex",
                 f"[1:a]volume={bgm_volume},aloop=loop={loop_count}:size=2e9[bg];"
-                f"[0:a][bg]amix=inputs=2:duration=first:dropout_transition=0[a]",
+                f"[0:a][bg]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,alimiter=limit=0.95:level=false[a]",
                 "-map", "[a]", "-c:a", "pcm_s16le", seg_m,
             ]
             subprocess.run(cmd, check=True, capture_output=True, text=True)
@@ -392,7 +392,7 @@ def _mix_audio_single(video_path, audio_path, bgm_path, output_path,
             "-i", video_path, "-i", audio_path, "-i", bgm_path,
             "-filter_complex",
             f"[2:a]volume={bgm_volume},aloop=loop={loop_count}:size=2e9[bg];"
-            f"[1:a][bg]amix=inputs=2:duration=first:dropout_transition=0[a]",
+            f"[1:a][bg]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,alimiter=limit=0.95:level=false[a]",
             "-map", "0:v", "-map", "[a]",
             "-c:v", "copy", "-c:a", "aac", "-b:a", audio_bitrate,
             "-shortest", output_path

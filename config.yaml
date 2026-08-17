@@ -83,7 +83,7 @@ bgm:
   path: assets/bgm.mp3
   volume: 0.12
   # GL-20260817-04：分段配乐专用音量（比单 BGM 高，无人声时明显可闻）
-  seg_volume: 0.18
+  seg_volume: 0.25
   # GL-20260817-04：分段配乐库根目录，按情绪分目录：{悬念|平叙|高潮|收束}/*.mp3
   # 库缺失/情绪缺素材 → 自动退回 path 单 BGM 兜底
   library_root: ~/历史说素材/bgm/
