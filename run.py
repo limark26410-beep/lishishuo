@@ -370,9 +370,8 @@ def _video_step_mix(episode_dir: str, tts_result: dict, cfg: dict) -> str:
     print(f"\n  可用素材: {len(materials)} 条 (总时长 {_time_str(total_dur)})")
     print(f"  音频时长: {_time_str(audio_dur)}")
     if total_dur < audio_dur:
-        raise RuntimeError(
-            f"素材总时长不足：素材 {total_dur:.0f}s < 音频 {audio_dur:.0f}s。\n"
-            f"请补充素材或缩短稿子（每个题材池建议总时长 ≥ 10 分钟）")
+        print(f"  ⚠ 素材总时长 {_time_str(total_dur)} < 音频 {_time_str(audio_dur)}："
+              f"将循环复用素材出片，画面可能重复；正式生产建议素材池 ≥ 音频时长")
 
     # ── 3v3. 选材计划（material_plan.json 已有→直接消费；否则 AI 选材/降级轮播）──
     plan = _resolve_video_plan(episode_dir, segments, materials)
@@ -411,15 +410,11 @@ def _video_step_mix(episode_dir: str, tts_result: dict, cfg: dict) -> str:
         clip_dur = seg_durs[idx] + (_tail_dur if is_last else _xfade_dur)
         start = float(p.get("clip_start") or 0)
         avail = mat["duration_sec"]
-        # 时长校验：起点+时长超出素材 → 起点回退 0；仍超 → 按素材全长截+警告
+        # GL-20260817-02：不再截短 clip_dur，段落超长交给 build_video_clip 内部循环填充
         if start + clip_dur > avail:
             start = 0.0
             print(f"    ⚠ 段 {p['index']}: 起点+时长超出素材"
-                  f"({clip_dur:.1f}s>{avail:.1f}s)，起点回退 0")
-        if clip_dur > avail:
-            clip_dur = avail
-            print(f"    ⚠ 段 {p['index']}: 段落时长超过素材全长，"
-                  f"按全长 {avail:.1f}s 截取（画面会提前切走）")
+                  f"({clip_dur:.1f}s>{avail:.1f}s)，起点回退 0，交由循环填充")
         clip_out = os.path.join(clips_dir, f"clip_{i+1:03d}.mp4")
         print(f"  [{i+1}/{len(plan)}] {mat['name']} "
               f"{_time_str(clip_dur)} @{start:.1f}s")

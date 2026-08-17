@@ -148,11 +148,22 @@ def build_video_clip(
         f"crop={width}:{height},setsar=1,fps={fps}"
     )
     encoder_args = _build_encoder_args(cfg or {})
-
-    cmd = (["ffmpeg", "-y", "-ss", f"{start:.2f}", "-i", str(video_path),
-            "-t", f"{duration_sec:.2f}", "-vf", vf]
-           + encoder_args
-           + ["-an", str(output_path)])
+    avail = get_media_duration(video_path)
+    # GL-20260817-02：起点+时长超出素材全长 → 从素材头循环填充（-stream_loop 必须放 -i 前）
+    if start + duration_sec > avail:
+        start = 0.0
+        print(f"  ⚠ 段落时长 {duration_sec:.1f}s > 素材全长 {avail:.1f}s，"
+              f"单素材循环填充（画面会重复）")
+        cmd = (["ffmpeg", "-y", "-stream_loop", "-1", "-ss", "0",
+                "-i", str(video_path), "-t", f"{duration_sec:.2f}",
+                "-vf", vf]
+               + encoder_args
+               + ["-an", str(output_path)])
+    else:
+        cmd = (["ffmpeg", "-y", "-ss", f"{start:.2f}", "-i", str(video_path),
+                "-t", f"{duration_sec:.2f}", "-vf", vf]
+               + encoder_args
+               + ["-an", str(output_path)])
     subprocess.run(cmd, check=True, capture_output=True, text=True)
 
     actual_dur = get_media_duration(output_path)
