@@ -91,6 +91,37 @@ def _tts_once(
     return asyncio.run(_run())
 
 
+def normalize_rate(rate) -> str:
+    """规范化 edge-tts rate 参数（GL-20260817-03 语速修复）。
+
+    edge-tts 要求格式 `^[+-]\\d+%$`（必须带正负号，如 +28% / -4%）；
+    纯数字 `28%` 会被 edge-tts 判 Invalid rate 而中断流水线。
+    本函数：无符号自动补 `+`（`28%`→`+28%`，语义=加速）；非法输入给清晰中文报错。
+    注意：2 倍速 = `+100%`（`+200%` 会被微软服务端封顶成 2 倍速，效果相同但值不规范）。
+    """
+    if rate is None:
+        return "-4%"
+    r = str(rate).strip()
+    if not r:
+        return "-4%"
+    r = r.replace(" ", "").replace("％", "%")
+    if r.endswith("%"):
+        r = r[:-1]
+    sign = ""
+    if r and r[0] in "+-":
+        sign, r = r[0], r[1:]
+    if not r or not r.isdigit():
+        raise ValueError(
+            f"语速格式不对：'{rate}'。须为带正负号的百分比，如 +28%（加速）或 -4%（减速）；"
+            f"2 倍速写 +100%")
+    n = int(r)
+    if n > 500:
+        raise ValueError(f"语速数值过大：'{rate}'（上限 +500%）。2 倍速写 +100%")
+    if not sign:
+        sign = "+"  # 无符号默认按加速处理（28% → +28%）
+    return f"{sign}{n}%"  # 始终带 %：'28'（无%）也按 +28% 处理
+
+
 def generate_tts(
     script_path: str,
     output_audio: str,
@@ -102,6 +133,7 @@ def generate_tts(
     调用 edge-tts 生成配音音频 + 字幕文件（自定义 DNS 直连，绕过 Shadowrocket 劫持）
     返回 {audio_path, subs_path, duration_sec}
     """
+    rate = normalize_rate(rate)  # GL-20260817-03：语速规范化（28%→+28%，非法中文报错）
     script_path = str(script_path)
     output_audio = str(output_audio)
     output_subs = str(output_subs)

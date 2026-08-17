@@ -91,3 +91,23 @@ review:
 cleanup:
   clean_clips: true
   clean_images: false
+
+# GL-20260817-03：风格预设（制作选项「风格」下拉 → 运行时 deep-merge 进配置）
+# story=故事风格（长片·舒缓，不覆盖任何值=固化现状）｜ short=短视频风格（快节奏）
+style:
+  default: story
+  presets:
+    story: {}
+    short:
+      tts:
+        rate: "+100%"        # 2 倍速（实测 +200% 会被服务端封顶成 2 倍速，规范值用 +100%）
+      bgm:
+        volume: 0.20
+      video:
+        transition: xfade    # 交叉溶解，短视频感
+        ken_burns:
+          zoom_end: 1.12     # 动效更明显
+      subtitle:
+        font_size: 66        # 字幕更抓眼
+      title_card:
+        duration: 2          # 片头更短更冲

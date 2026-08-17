@@ -112,6 +112,15 @@
     </div>
 
     <div class="row">
+      <label>风格</label>
+      <select id="a_style" style="flex:1">
+        <option value="story">故事风格（长片·舒缓）</option>
+        <option value="short">短视频风格（快节奏·2倍语速）</option>
+      </select>
+      <div class="hint">影响语速、配乐、转场、字幕、片头等呈现参数（config.yaml style.presets）</div>
+    </div>
+
+    <div class="row">
       <label>图片来源</label>
       <div class="radio-group">
         <label><input type="radio" name="imgsrc" value="generate" checked onchange="toggleImg()"> 自动生图</label>
@@ -233,7 +242,7 @@
         <div><label>TTS 声线</label>
           <select id="a_voice"><option value="zh-CN-YunjianNeural">云健 · 男声 · 沉稳解说（当前）</option></select>
         </div>
-        <div><label>TTS 语速</label><input type="text" id="a_rate" value="-4%"></div>
+        <div><label>TTS 语速</label><input type="text" id="a_rate" value="-4%" placeholder="如 +28% 加速 / -4% 减速"><div class="hint" style="display:block;margin-top:2px">须带正负号：+28% 加速、-4% 减速；2 倍速写 +100%（填 28% 会自动按 +28% 处理）</div></div>
         <div><label>生图模型</label>
           <select id="a_model">
             <optgroup label="通义万相">
@@ -344,6 +353,7 @@ async function loadCfg(){
     if(c.title_card) $('a_dur').value = c.title_card.duration ?? 3;
     if(c.video?.encoder_options?.libx264) $('a_crf').value = c.video.encoder_options.libx264.crf ?? 26;
     if(c.tts){ if(c.tts.voice && [...$('a_voice').options].some(o=>o.value===c.tts.voice)) $('a_voice').value=c.tts.voice; $('a_rate').value = c.tts.rate || ''; }
+    if(c.style?.default && [...$('a_style').options].some(o=>o.value===c.style.default)) $('a_style').value = c.style.default; // GL-20260817-03：风格默认值回填
     if(c.output?.library_root) $('a_root').value = c.output.library_root;
     if(c.video_source?.root) $('a_video_root').value = c.video_source.root;
     if(c.image?.tongyi){
@@ -529,7 +539,7 @@ async function loadVideoTopics(){
 }
 
 async function saveAdv(){
-  await post('/api/save-config', {advanced:{
+  const r = await post('/api/save-config', {advanced:{
     title_duration: +$('a_dur').value, margin_bottom: +$('a_margin').value,
     font_size: +$('a_font').value, crf: +$('a_crf').value,
     voice: $('a_voice').value, rate: $('a_rate').value,
@@ -538,8 +548,10 @@ async function saveAdv(){
     img_model: $('a_model').value,
     img_size: $('a_size').value,
   }});
+  if(r && r.ok === false){ alert(r.msg || '保存失败'); return false; } // GL-20260817-03：语速等校验失败提示
   $('advMsg').textContent = '已保存';
   setTimeout(()=>$('advMsg').textContent='', 2000);
+  return true;
 }
 
 let isAiMode = false; // AI 生成的稿子回填后，走 ai_mode 流水线
@@ -747,6 +759,7 @@ async function start(){
     name: $('name').value.trim(),
     series: $('series').value.trim(),
     title_bg: $('titlebg').value.trim(),
+    style: $('a_style').value,   // GL-20260817-03：风格预设（story/short）
   };
   // GL-20260817-01：图片来源三选一显式分支（消除隐式触发）
   const src = document.querySelector('input[name=imgsrc]:checked').value;
@@ -764,7 +777,7 @@ async function start(){
   }
   // AI 模式标记（AI 生成的稿子回填后走 ai_mode 流水线）
   if (isAiMode) { params.ai_mode = true; }
-  await saveAdv();
+  if(await saveAdv() === false) return; // GL-20260817-03：保存校验失败（如语速非法）则中止
   const r = await post('/api/start', params);
   if(!r.ok){ alert(r.msg); return; }
   $('startBtn').disabled = true;

@@ -354,6 +354,8 @@ def run_pipeline(params):
             cmd += ["--title-bg", params["title_bg"]]
         if params.get("name"):
             cmd += ["--name", params["name"]]
+        if params.get("style"):
+            cmd += ["--style", params["style"]]  # GL-20260817-03：风格预设（story/short）
 
         log(f"▶ 开始制作：{' '.join(cmd[2:])}")
 
@@ -880,7 +882,12 @@ class Handler(BaseHTTPRequestHandler):
             if "voice" in adv:
                 cfg.setdefault("tts", {})["voice"] = adv["voice"]
             if "rate" in adv:
-                cfg.setdefault("tts", {})["rate"] = adv["rate"]
+                # GL-20260817-03：保存时规范化语速（28%→+28%），非法给中文提示
+                from lib.tts_utils import normalize_rate
+                try:
+                    cfg.setdefault("tts", {})["rate"] = normalize_rate(adv["rate"])
+                except ValueError as e:
+                    return self._json({"ok": False, "msg": str(e)})
             if "library_root" in adv:
                 cfg.setdefault("output", {})["library_root"] = adv["library_root"]
             if "video_source_root" in adv and adv["video_source_root"]:

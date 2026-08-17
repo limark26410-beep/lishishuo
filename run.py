@@ -60,6 +60,38 @@ def load_config(config_path: str) -> dict:
         return yaml.safe_load(f)
 
 
+def _deep_merge(base: dict, override: dict) -> None:
+    """递归合并：override 的值覆盖 base（dict 递归、其他直接替换）"""
+    for k, v in override.items():
+        if isinstance(v, dict) and isinstance(base.get(k), dict):
+            _deep_merge(base[k], v)
+        else:
+            base[k] = v
+
+
+def apply_style_preset(cfg: dict, style) -> None:
+    """GL-20260817-03：把风格预设 deep-merge 进 cfg（预设优先）。
+
+    style 取 config.yaml style.presets 的键（story/short）；None → 用 style.default。
+    未知风格 → 警告并回退默认。故事风格（story）预设为空 = 不覆盖任何值 = 固化现状。
+    """
+    style_cfg = cfg.get("style", {})
+    presets = style_cfg.get("presets", {})
+    if not style:
+        style = style_cfg.get("default", "")
+    preset = presets.get(style)
+    if preset is None:
+        if style:
+            print(f"  ⚠ 未知风格 '{style}'（可用: {', '.join(presets) or '无'}），回退默认")
+        style = style_cfg.get("default", "")
+        preset = presets.get(style) or {}
+    if preset:
+        _deep_merge(cfg, preset)
+        print(f"  ▶ 风格: {style}（预设 {len(preset)} 组旋钮已应用）")
+    else:
+        print(f"  ▶ 风格: {style}（无覆盖 = 现状配方）")
+
+
 def _encode_args(cfg: dict, final: bool = False) -> list:
     """
     按平台和配置生成编码参数
@@ -677,6 +709,8 @@ def main():
     parser.add_argument("--images-dir", help="本地图片目录（指定则不生图）")
     parser.add_argument("--video-dir", help="视频模式素材目录（指定则走视频混剪，不生成图片）")
     parser.add_argument("--no-archive", action="store_true", help="不归档到素材库")
+    parser.add_argument("--style", default=None,
+                        help="风格预设（config.yaml style.presets 的键，如 story/short；缺省用 style.default）")
     parser.add_argument("--only", choices=["subtitle", "title", "encode"],
                         help="只重跑某一步（需已有中间产物）")
     args = parser.parse_args()
@@ -687,6 +721,10 @@ def main():
         sys.exit(1)
 
     cfg = load_config(config_path)
+
+    # GL-20260817-03：应用风格预设（deep-merge 进 cfg，之后全链路照跑；故事=不覆盖=现状）
+    apply_style_preset(cfg, getattr(args, "style", None))
+
     episode_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                "episodes", args.episode)
 
