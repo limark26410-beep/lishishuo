@@ -133,6 +133,57 @@ def segment_audio_durations(segments: list, subs_srt: str) -> list:
     return durations
 
 
+def segment_audio_bounds(segments: list, subs_srt: str) -> list:
+    """每段音频的绝对起止时间 [[start, end], ...]（GL-20260817-04 分段配乐用）。
+
+    逻辑与 segment_audio_durations 同源：按段落字符长度锚定 cue 边界；
+    匹配失败 → 退化为按字数占比在总时长内切分。
+    """
+    if not segments:
+        return []
+    cues = _parse_srt(subs_srt)
+    if not cues:
+        return _bounds_from_durs(segments, _fallback(segments, 0.0))
+    total_audio = cues[-1]["end"]
+    seg_lens = [len(_norm(s["text"])) for s in segments]
+    if not any(seg_lens):
+        return _bounds_from_durs(segments, _fallback(segments, total_audio))
+
+    bounds = []
+    cue_idx = 0
+    ok = True
+    for need in seg_lens:
+        consumed = 0
+        start_t = None
+        end_t = None
+        while cue_idx < len(cues) and consumed < need:
+            c = cues[cue_idx]
+            if start_t is None:
+                start_t = c["start"]
+            end_t = c["end"]
+            consumed += len(_norm(c["text"]))
+            cue_idx += 1
+        if consumed < need or start_t is None:
+            ok = False
+            break
+        bounds.append([start_t, end_t])
+
+    if not ok or len(bounds) != len(segments):
+        print("  ⚠ 字幕与段落匹配不精确，段起止按字数占比切分")
+        return _bounds_from_durs(segments, _fallback(segments, total_audio))
+    return bounds
+
+
+def _bounds_from_durs(segments: list, durs: list) -> list:
+    """把时长列表转成连续起止（无字幕/匹配失败时用）"""
+    bounds = []
+    cur = 0.0
+    for d in durs:
+        bounds.append([cur, cur + d])
+        cur += d
+    return bounds
+
+
 def _fallback(segments: list, total_audio: float) -> list:
     """按字数占比分配总时长"""
     total_han = sum(len(_norm(s["text"])) for s in segments)

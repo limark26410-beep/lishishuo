@@ -69,6 +69,30 @@ def _deep_merge(base: dict, override: dict) -> None:
             base[k] = v
 
 
+def _build_bgm_map(bgm_cfg: dict) -> dict:
+    """扫描配乐库根目录下的情绪子目录，返回 {情绪: 乐文件路径}。
+
+    规范：{library_root}/{悬念|平叙|高潮|收束}/*.mp3；每情绪取第一个文件
+    （素材库有备选后可按期轮换）。库不存在/为空 → 返回空 dict（混音走单 BGM 兜底）。
+    """
+    root = os.path.expanduser(bgm_cfg.get("library_root", "~/历史说素材/bgm/"))
+    if not os.path.isdir(root):
+        return {}
+    from emotion_tag import EMOTIONS
+    m = {}
+    for emo in EMOTIONS:
+        d = os.path.join(root, emo)
+        if not os.path.isdir(d):
+            continue
+        files = sorted(
+            f for f in os.listdir(d)
+            if f.lower().endswith((".mp3", ".wav", ".m4a", ".flac"))
+        )
+        if files:
+            m[emo] = os.path.join(d, files[0])
+    return m
+
+
 def apply_style_preset(cfg: dict, style) -> None:
     """GL-20260817-03：把风格预设 deep-merge 进 cfg（预设优先）。
 
@@ -477,7 +501,22 @@ def _video_step_mix(episode_dir: str, tts_result: dict, cfg: dict) -> str:
         concat_clips(clip_paths=clip_paths, output_path=merged_video)
 
     # ── 3v6. 复用后处理：混音 → 字幕 → 片头 → 编码 ──
-    return _post_mix(episode_dir, merged_video, tts_result, cfg)
+    # GL-20260817-04：段落情绪标注 → 分段配乐（只对视频模式生效；图片模式保持单 BGM）
+    seg_audio = None
+    try:
+        from script_seg import segment_audio_bounds
+        from emotion_tag import tag_emotions, EMOTIONS
+        bounds = segment_audio_bounds(segments, subs_srt)
+        emotions = tag_emotions(segments, os.environ.get("DEEPSEEK_API_KEY", ""))
+        if len(bounds) == len(emotions) == len(segments):
+            seg_audio = [
+                {"start": b[0], "end": b[1], "emotion": e["emotion"]}
+                for b, e in zip(bounds, emotions)
+            ]
+    except Exception as e:  # noqa: BLE001 标注失败不阻断，退回单 BGM
+        print(f"  ⚠ 分段配乐准备失败（{type(e).__name__}: {e}），退回单 BGM")
+        seg_audio = None
+    return _post_mix(episode_dir, merged_video, tts_result, cfg, seg_audio=seg_audio)
 
 
 def _resolve_video_plan(episode_dir: str, segments: list, materials: list) -> list:
@@ -557,10 +596,12 @@ def _material_by_path(materials: list, path: str):
     return None
 
 
-def _post_mix(episode_dir: str, merged_video: str, tts_result: dict, cfg: dict) -> str:
+def _post_mix(episode_dir: str, merged_video: str, tts_result: dict, cfg: dict,
+              seg_audio: list = None) -> str:
     """后处理（视频模式专用，与图片分支 3e-3h 同款逻辑）：
     混音 → 字幕折行检查 → 烧字幕 → 片头叠加 → 编码。
     图片分支代码保持不动，此函数只服务视频模式。
+    seg_audio: [{start,end,emotion}] 分段配乐用（None=单 BGM）
     """
     audio_path = tts_result["audio_path"]
     subs_srt = tts_result["subs_srt"]
@@ -574,6 +615,7 @@ def _post_mix(episode_dir: str, merged_video: str, tts_result: dict, cfg: dict) 
         os.path.dirname(os.path.abspath(__file__)),
         bgm_cfg.get("path", "assets/bgm.mp3"),
     )
+    bgm_map = _build_bgm_map(bgm_cfg) if seg_audio else None
     mix_audio(
         video_path=merged_video,
         audio_path=audio_path,
@@ -581,6 +623,8 @@ def _post_mix(episode_dir: str, merged_video: str, tts_result: dict, cfg: dict) 
         output_path=audio_mixed,
         bgm_volume=bgm_cfg.get("volume", 0.12),
         audio_bitrate=enc_cfg.get("audio_bitrate", "192k"),
+        seg_audio=seg_audio,
+        bgm_map=bgm_map,
     )
 
     # ── 字幕后处理 + 自动检查 ──

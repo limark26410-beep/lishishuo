@@ -297,12 +297,86 @@ def mix_audio(
     output_path: str,
     bgm_volume: float = 0.12,
     audio_bitrate: str = "192k",
+    seg_audio: list = None,
+    bgm_map: dict = None,
 ) -> str:
-    """混入配音 + 背景古风乐，BGM 循环铺满"""
+    """混入配音 + 背景乐。
+
+    单 BGM 模式（seg_audio/bgm_map 为空）：BGM 循环铺满全程（现状逻辑）。
+    分段配乐模式（GL-20260817-04）：seg_audio=[{start,end,emotion},...]，
+    bgm_map={情绪: 文件路径}——按段落起止切配音、对应情绪乐段铺满该段，
+    分段混音后 concat，再 mux 回视频。情绪缺素材 → 用 bgm_path 兜底。
+    """
     video_dur = get_media_duration(video_path)
 
+    if not seg_audio or not bgm_map or not os.path.exists(bgm_path) and not any(
+            os.path.exists(p) for p in bgm_map.values()):
+        # 无 BGM 或未启用分段配乐 → 现状单 BGM / 仅配音
+        return _mix_audio_single(video_path, audio_path, bgm_path, output_path,
+                                 bgm_volume, audio_bitrate)
+
+    # ── 分段配乐：逐段混音 → concat ──
+    import tempfile
+    tmpdir = tempfile.mkdtemp(prefix="mixseg_")
+    try:
+        seg_files = []
+        for i, seg in enumerate(seg_audio):
+            start = float(seg.get("start") or 0)
+            end = float(seg.get("end") or start)
+            dur = max(end - start, 0.3)
+            emotion = seg.get("emotion") or "平叙"
+            # 情绪乐段 → 缺素材用兜底 BGM
+            bgm = bgm_map.get(emotion) or bgm_path
+            if not os.path.exists(bgm):
+                bgm = bgm_path
+            if not os.path.exists(bgm):
+                # 连兜底都没有：该段只留配音
+                seg_v = os.path.join(tmpdir, f"seg_{i:02d}_voice.wav")
+                _cut_audio(audio_path, start, dur, seg_v)
+                seg_files.append(seg_v)
+                continue
+            seg_v = os.path.join(tmpdir, f"seg_{i:02d}_voice.wav")
+            seg_m = os.path.join(tmpdir, f"seg_{i:02d}.wav")
+            _cut_audio(audio_path, start, dur, seg_v)
+            bgm_dur = get_media_duration(bgm)
+            loop_count = max(1, math.ceil(dur / bgm_dur))
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", seg_v, "-i", bgm,
+                "-filter_complex",
+                f"[1:a]volume={bgm_volume},aloop=loop={loop_count}:size=2e9[bg];"
+                f"[0:a][bg]amix=inputs=2:duration=first:dropout_transition=0[a]",
+                "-map", "[a]", "-c:a", "pcm_s16le", seg_m,
+            ]
+            subprocess.run(cmd, check=True, capture_output=True, text=True)
+            seg_files.append(seg_m)
+            print(f"  [配乐 {i+1}/{len(seg_audio)}] {emotion} {dur:.1f}s"
+                  f" ← {Path(bgm).name}")
+
+        # concat 段音频 → 整段混音音频
+        mixed = os.path.join(tmpdir, "mixed.wav")
+        _concat_audio(seg_files, mixed)
+
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", video_path, "-i", mixed,
+            "-c:v", "copy", "-c:a", "aac", "-b:a", audio_bitrate,
+            "-shortest", output_path
+        ]
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
+    finally:
+        import shutil
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    print(f"  Audio mix (分段配乐): {Path(output_path).name}")
+    return output_path
+
+
+def _mix_audio_single(video_path, audio_path, bgm_path, output_path,
+                      bgm_volume, audio_bitrate) -> str:
+    """现状单 BGM 逻辑（无 BGM 时仅配音）"""
+    video_dur = get_media_duration(video_path)
     if not os.path.exists(bgm_path):
-        # 无 BGM，仅配音
         cmd = [
             "ffmpeg", "-y",
             "-i", video_path, "-i", audio_path,
@@ -327,6 +401,29 @@ def mix_audio(
 
     print(f"  Audio mix: {Path(output_path).name}")
     return output_path
+
+
+def _cut_audio(audio_path: str, start: float, dur: float, out: str) -> None:
+    """切一段音频（wav 无损中间格式）"""
+    cmd = ["ffmpeg", "-y", "-ss", f"{start:.3f}", "-t", f"{dur:.3f}",
+           "-i", audio_path, "-vn", "-c:a", "pcm_s16le", out]
+    subprocess.run(cmd, check=True, capture_output=True, text=True)
+
+
+def _concat_audio(files: list, out: str) -> None:
+    """concat 多个同规格 wav（demuxer 直连）"""
+    if len(files) == 1:
+        import shutil
+        shutil.copyfile(files[0], out)
+        return
+    list_path = out + ".txt"
+    with open(list_path, "w", encoding="utf-8") as f:
+        for p in files:
+            f.write(f"file '{p}'\n")
+    cmd = ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_path,
+           "-c:a", "pcm_s16le", out]
+    subprocess.run(cmd, check=True, capture_output=True, text=True)
+    os.remove(list_path)
 
 
 # ─────────── 烧字幕 ───────────
