@@ -190,6 +190,163 @@ def generate_tts(
     }
 
 
+# ─────────── 分段 TTS（GL-20260817-05 5b-3 段落级语速） ───────────
+
+def _audio_duration_sec(path: str) -> float:
+    """ffmpeg 解析音频时长"""
+    r = subprocess.run(["ffmpeg", "-i", path], capture_output=True, text=True)
+    m = re.search(r'Duration: (\d+):(\d+):(\d+\.?\d*)', r.stderr)
+    if not m:
+        raise RuntimeError(f"无法解析音频时长: {path}")
+    h, mi, s = float(m.group(1)), float(m.group(2)), float(m.group(3))
+    return h * 3600 + mi * 60 + s
+
+
+def _tts_with_retry(text: str, out_audio: str, out_subs: str,
+                    voice: str, rate: str, seg_no: int = 0) -> float:
+    """单段 TTS（带网络重试），返回音频时长秒数"""
+    import time as _t
+    last_err = None
+    for attempt in range(1, _MAX_RETRIES + 1):
+        try:
+            audio_bytes = _tts_once(text, out_audio, out_subs, voice, rate)
+            if audio_bytes > 0:
+                break
+            raise RuntimeError("empty audio")
+        except (TimeoutError, aiohttp.ClientError, ConnectionError,
+                OSError, EdgeTTSException, RuntimeError) as e:
+            last_err = e
+            if attempt < _MAX_RETRIES:
+                wait = attempt * 8
+                print(f"  ⚠ 段{seg_no} 网络超时（第{attempt}次），"
+                      f"{wait}秒后重试…（{type(e).__name__}）")
+                _t.sleep(wait)
+                continue
+    else:
+        raise RuntimeError(f"edge-tts failed: {last_err}")
+    return _audio_duration_sec(out_audio)
+
+
+def _shift_srt(srt_path: str, offset: float) -> str:
+    """SRT 时间轴整体平移 offset 秒，返回新内容"""
+    def _add(t: str) -> str:
+        h, mi, s, ms = int(t[0:2]), int(t[3:5]), int(t[6:8]), int(t[9:12])
+        total = h * 3600 + mi * 60 + s + ms / 1000 + offset
+        hh = int(total // 3600)
+        mm = int((total % 3600) // 60)
+        ss = int(total % 60)
+        mss = int(round((total - int(total)) * 1000))
+        if mss == 1000:
+            ss += 1
+            mss = 0
+        return f"{hh:02d}:{mm:02d}:{ss:02d},{mss:03d}"
+
+    out = []
+    for line in open(srt_path, encoding="utf-8"):
+        m = re.match(r"^(\d+):(\d+):(\d+),(\d+)\s*-->\s*(\d+):(\d+):(\d+),(\d+)\s*$", line.strip())
+        if m:
+            out.append(f"{_add(line.strip().split(' --> ')[0])} --> "
+                       f"{_add(line.strip().split(' --> ')[1])}\n")
+        else:
+            out.append(line)
+    return "".join(out)
+
+
+def _concat_audios(files: list, out_path: str) -> None:
+    """concat 拼接同参数 mp3（edge-tts 各段输出码率一致）"""
+    if len(files) == 1:
+        import shutil
+        shutil.copyfile(files[0], out_path)
+        return
+    import tempfile
+    list_path = os.path.join(tempfile.mkdtemp(prefix="ttscon_"), "files.txt")
+    with open(list_path, "w", encoding="utf-8") as f:
+        for p in files:
+            f.write(f"file '{Path(p).resolve()}'\n")
+    subprocess.run(
+        ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_path,
+         "-c:a", "copy", out_path],
+        check=True, capture_output=True, text=True)
+
+
+def _merge_srts(seg_srts: list) -> str:
+    """多段 SRT 内容合并 + 重编号（段间空行分隔）"""
+    blocks = []
+    for s in seg_srts:
+        s = s.strip()
+        if s:
+            blocks.append(s)
+    if not blocks:
+        return ""
+    # 重编号
+    numbered = []
+    idx = 1
+    for b in blocks:
+        lines = b.split("\n")
+        out_lines = []
+        for line in lines:
+            if re.match(r"^\d+$", line.strip()):
+                out_lines.append(str(idx))
+                idx += 1
+            else:
+                out_lines.append(line)
+        numbered.append("\n".join(out_lines))
+    return "\n\n".join(numbered) + "\n"
+
+
+def generate_tts_segmented(
+    segments: list,
+    emotions: list,
+    output_audio: str,
+    output_subs: str,
+    voice: str = "zh-CN-YunjianNeural",
+    base_rate: str = "-4%",
+    emotion_rates: dict = None,
+) -> dict:
+    """分段 TTS（5b-3 段落级语速）：每段按情绪 rate 独立生成，
+    音频 concat 拼接、SRT 时间轴逐段累加。返回与 generate_tts 同结构。
+
+    segments: [{index, text}]；emotions: [{index, emotion}]；
+    emotion_rates: {情绪: rate}（如 {高潮: "+20%"}，缺省用 base_rate）。
+    """
+    import tempfile, shutil
+    emotion_rates = emotion_rates or {}
+    tmpdir = tempfile.mkdtemp(prefix="tts_seg_")
+    try:
+        seg_audios, seg_srts = [], []
+        offset = 0.0
+        n = len(segments)
+        for i, (seg, emo) in enumerate(zip(segments, emotions)):
+            text = (seg.get("text") or "").strip()
+            if not text:
+                continue
+            rate = normalize_rate(emotion_rates.get(emo["emotion"], base_rate))
+            seg_mp3 = os.path.join(tmpdir, f"seg_{i:03d}.mp3")
+            seg_srt = os.path.join(tmpdir, f"seg_{i:03d}.srt")
+            dur = _tts_with_retry(text, seg_mp3, seg_srt, voice, rate, i + 1)
+            seg_srts.append(_shift_srt(seg_srt, offset))
+            seg_audios.append(seg_mp3)
+            print(f"  [段{i+1}/{n}] {emo['emotion']} rate={rate} {dur:.1f}s")
+            offset += dur
+        if not seg_audios:
+            raise RuntimeError("分段 TTS：所有段落均为空")
+        _concat_audios(seg_audios, output_audio)
+        merged = _merge_srts(seg_srts)
+        with open(output_subs, "w", encoding="utf-8") as f:
+            f.write(merged)
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    print(f"  TTS done（分段 {len(seg_audios)} 段）: "
+          f"{Path(output_audio).name} -> {offset:.1f}s")
+    print(f"  Subs: {Path(output_subs).name}")
+    return {
+        "audio_path": output_audio,
+        "subs_path": output_subs,
+        "duration_sec": offset,
+    }
+
+
 def vtt_to_srt(vtt_path: str, srt_path: str) -> str:
     """
     VTT 字幕转 SRT 格式

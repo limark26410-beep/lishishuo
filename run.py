@@ -33,7 +33,7 @@ from datetime import timedelta
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "lib"))
 
 import yaml
-from tts_utils import generate_tts, vtt_to_srt
+from tts_utils import generate_tts, generate_tts_segmented, vtt_to_srt
 import subtitle_burn
 import gen_title
 from pipeline_steps import (
@@ -168,6 +168,31 @@ def step_tts(episode_dir: str, cfg: dict) -> dict:
     subs_vtt = os.path.join(episode_dir, "subs.vtt")
     subs_srt = os.path.join(episode_dir, "subs.srt")
     tts_cfg = cfg.get("tts", {})
+
+    # GL-20260817-05 5b-3：段落级语速——配置 tts.emotion_rates 时按段落分次 TTS
+    emotion_rates = tts_cfg.get("emotion_rates") or {}
+    if emotion_rates:
+        from script_seg import split_segments
+        from emotion_tag import tag_emotions
+        with open(script_path, encoding="utf-8") as f:
+            body = f.read()
+        segments = split_segments(body)
+        emotions = tag_emotions(segments, os.environ.get("DEEPSEEK_API_KEY", ""))
+        if segments and emotions and len(segments) == len(emotions):
+            print(f"  ▶ 段落级语速：{emotion_rates}")
+            result = generate_tts_segmented(
+                segments=segments,
+                emotions=emotions,
+                output_audio=audio_path,
+                output_subs=subs_vtt,
+                voice=tts_cfg.get("voice", "zh-CN-YunjianNeural"),
+                base_rate=tts_cfg.get("rate", "-4%"),
+                emotion_rates=emotion_rates,
+            )
+            vtt_to_srt(subs_vtt, subs_srt)
+            result["subs_srt"] = subs_srt
+            return result
+        print("  ⚠ 段落/情绪切分失败，退回整篇 TTS")
 
     result = generate_tts(
         script_path=script_path,

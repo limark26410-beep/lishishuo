@@ -17,6 +17,8 @@ tts:
   voice: zh-CN-YunjianNeural
   rate: -4%
   subtitle_format: vtt
+  # GL-20260817-05 5b-3：段落级语速（按段落情绪自动套用；留空=整篇统一语速）
+  emotion_rates: {}
 image:
   source: generate
   local_dir: ''
