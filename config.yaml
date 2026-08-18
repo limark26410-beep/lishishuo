@@ -109,7 +109,7 @@ style:
       bgm:
         volume: 0.20
       video:
-        transition: xfade    # 交叉溶解，短视频感
+        transition: mixed    # 混合转场：高潮硬切 + 抒情溶解（5b-1）
         ken_burns:
           zoom_end: 1.12     # 动效更明显
       subtitle:

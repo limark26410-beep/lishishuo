@@ -217,6 +217,71 @@ def concat_clips(
     return output_path
 
 
+# ─────────── 混合转场（GL-20260817-05 5b-1） ───────────
+
+def mixed_concat(
+    clip_paths: list,
+    emotions: list,
+    output_path: str,
+    cfg: dict = None,
+    transition: str = "fade",
+    duration: float = 1.0,
+    fps: int = 25,
+) -> str:
+    """混合转场：与高潮段相邻的衔接硬切，其余 xfade 溶解。
+
+    规则：衔接在 clip i 与 i+1 之间，若其中任一段情绪是「高潮」→ 硬切（增强冲击）；
+    否则 xfade 溶解（抒情过渡）。实现：按硬切点切块，块内 xfade 链式、块间 concat。
+    emotions: [{index, emotion}, ...] 与段落等长（长度不足按平叙兜底）。
+    """
+    if len(clip_paths) <= 1:
+        subprocess.run(["ffmpeg", "-y", "-i", clip_paths[0], "-c", "copy",
+                        output_path], check=True, capture_output=True, text=True)
+        return output_path
+
+    def _emo(i):
+        return emotions[i].get("emotion", "平叙") if i < len(emotions) else "平叙"
+
+    hard_cuts = set()
+    for i in range(len(clip_paths) - 1):
+        if "高潮" in (_emo(i), _emo(i + 1)):
+            hard_cuts.add(i)
+
+    blocks, cur = [], [clip_paths[0]]
+    for i in range(1, len(clip_paths)):
+        if (i - 1) in hard_cuts:
+            blocks.append(cur)
+            cur = [clip_paths[i]]
+        else:
+            cur.append(clip_paths[i])
+    blocks.append(cur)
+
+    n_join = len(clip_paths) - 1
+    print(f"  混合转场: 硬切 {len(hard_cuts)} 处 / xfade {n_join - len(hard_cuts)} 处"
+          f"（→ {len(blocks)} 块）")
+
+    tmp_dir = tempfile.mkdtemp(prefix="mixed_")
+    try:
+        block_files = []
+        for bi, block in enumerate(blocks):
+            if len(block) == 1:
+                block_files.append(block[0])
+            else:
+                tmp = os.path.join(tmp_dir, f"block_{bi:03d}.mp4")
+                xfade_concat(block, tmp, cfg=cfg, transition=transition,
+                             duration=duration, fps=fps)
+                block_files.append(tmp)
+        if len(block_files) == 1:
+            subprocess.run(["ffmpeg", "-y", "-i", block_files[0], "-c", "copy",
+                            output_path], check=True, capture_output=True, text=True)
+        else:
+            concat_clips(block_files, output_path)
+    finally:
+        import shutil
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+    return output_path
+
+
 # ─────────── 交叉溶解拼接（xfade，重编码） ───────────
 
 def xfade_concat(

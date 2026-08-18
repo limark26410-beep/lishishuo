@@ -414,6 +414,16 @@ def _video_step_mix(episode_dir: str, tts_result: dict, cfg: dict) -> str:
     for s, d in zip(segments, seg_durs):
         print(f"    [{s['index']}] {_time_str(d)} | {s['text'][:26]}…")
 
+    # ── 3v1b. 段落情绪标注（5a 分段配乐 + 5b-1 混合转场共用，失败不阻断）──
+    seg_emotions = None
+    try:
+        from emotion_tag import tag_emotions
+        seg_emotions = tag_emotions(
+            segments, os.environ.get("DEEPSEEK_API_KEY", ""))
+    except Exception as e:
+        print(f"  ⚠ 情绪标注失败（{type(e).__name__}: {e}），跳过情绪相关功能")
+        seg_emotions = None
+
     # ── 3v2. 素材清单 + 池时长校验 ──
     from material_scanner import scan_material
     lib_root = os.path.expanduser(vs_cfg.get("root", "~/历史说素材/视频/"))
@@ -484,12 +494,26 @@ def _video_step_mix(episode_dir: str, tts_result: dict, cfg: dict) -> str:
         )
         clip_paths.append(clip_out)
 
-    # ── 3v5. 拼接（concat 硬切 / xfade 交叉溶解，读 video.transition）──
+    # ── 3v5. 拼接（concat 硬切 / xfade 交叉溶解 / mixed 混合，读 video.transition）──
     merged_video = os.path.join(episode_dir, "_merged_video.mp4")
-    if video_cfg.get("transition", "concat") == "xfade":
+    transition_mode = video_cfg.get("transition", "concat")
+    if transition_mode == "xfade":
         print(f"\n  拼接 clips (xfade 交叉溶解)...")
         xfade_concat(
             clip_paths=clip_paths,
+            output_path=merged_video,
+            cfg=cfg,
+            transition=xfade_cfg.get("transition", "fade"),
+            duration=float(xfade_cfg.get("duration", 1.0)),
+            fps=fps,
+        )
+    elif transition_mode == "mixed" and seg_emotions:
+        # GL-20260817-05 5b-1：与高潮段相邻的衔接硬切，其余 xfade 溶解
+        from ffmpeg_utils import mixed_concat
+        print(f"\n  拼接 clips (mixed 混合转场)...")
+        mixed_concat(
+            clip_paths=clip_paths,
+            emotions=seg_emotions,
             output_path=merged_video,
             cfg=cfg,
             transition=xfade_cfg.get("transition", "fade"),
@@ -505,13 +529,11 @@ def _video_step_mix(episode_dir: str, tts_result: dict, cfg: dict) -> str:
     seg_audio = None
     try:
         from script_seg import segment_audio_bounds
-        from emotion_tag import tag_emotions, EMOTIONS
         bounds = segment_audio_bounds(segments, subs_srt)
-        emotions = tag_emotions(segments, os.environ.get("DEEPSEEK_API_KEY", ""))
-        if len(bounds) == len(emotions) == len(segments):
+        if seg_emotions and len(bounds) == len(seg_emotions) == len(segments):
             seg_audio = [
                 {"start": b[0], "end": b[1], "emotion": e["emotion"]}
-                for b, e in zip(bounds, emotions)
+                for b, e in zip(bounds, seg_emotions)
             ]
     except Exception as e:  # noqa: BLE001 标注失败不阻断，退回单 BGM
         print(f"  ⚠ 分段配乐准备失败（{type(e).__name__}: {e}），退回单 BGM")
