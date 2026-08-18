@@ -193,8 +193,8 @@ def step_image_gen(episode_dir: str, cfg: dict) -> dict:
                 "prompt": p,
             })
 
-    # 成本护栏
-    img_cfg = cfg.get("image_gen", {})
+    # 成本护栏（GL-20260817-05 键名兼容：config 顶层是 image，旧 image_gen 兼容）
+    img_cfg = cfg.get("image", cfg.get("image_gen", {}))
     cost_guard = img_cfg.get("cost_guard", {})
     max_images = cost_guard.get("max_images_per_episode", 50)
     if len(all_prompts) > max_images:

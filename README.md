@@ -44,7 +44,7 @@ python3 run.py --episode 001
 | 配置项 | 生产（Linux） | 开发（macOS） |
 |--------|-------------|-------------|
 | encoder | `libx264`（默认） | `h264_videotoolbox`（auto 自动切） |
-| preset | `veryfast`（默认） | 同上 |
+| preset | `medium`（默认） | 同上 |
 | transition | `concat`（硬切，默认） | 同上 |
 | subtitle font | `Noto Sans CJK SC` | `AdobeHeitiStd-Regular` |
 

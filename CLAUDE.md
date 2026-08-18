@@ -30,13 +30,13 @@
 - 标题只做视觉片头（gen_title.py v3），不占旁白。
 - **钩子必须从 0:00 就响**：抖音前几秒静音会大量划走，开头不能空。
 
-## 片头模板（第四期风格，固定 6 秒）
+## 片头模板（第四期风格，时长 3 秒）
 - gen_title.py v3
 - 主标题：**大字 GOLD fs=69**（1-2 行，行距 25px），内容 = 朝代名 + 副标题
 - 系列行：**小字 WHITE fs=36**，"上下五千年 · 第X期"，带 "·" 分隔
 - 金线：400×3px GOLD，紧贴系列行下方（GLINE_GAP=18px）
 - 整体垂直居中于 1920 画面
-- **时长固定 6 秒，不可改**
+- **时长由 config `title_card.duration` 控制**：默认 3 秒（旧文写"固定 6 秒"已过时）；短视频风格 2 秒；web 高级设置可调
 
 ## 片头叠加方式（2026-07-23 锁定，改掉旧 concat 方案）
 - **片头以 overlay 叠加方式盖在正文前 6 秒，不用 concat 拼接**
@@ -48,8 +48,8 @@
 - FFmpeg 命令：`overlay=0:0:enable='between(t,0,6)':eof_action=pass`
 
 ## 字幕（2026-07-22 锁定 v4）
-- **真分辨率**：PlayResX=1080 / PlayResY=1920 / FontSize=60（真像素）/ MarginV=280
-- **不再用 FontSize=9 的 384 空间**
+- **真分辨率**：PlayResX=1080 / PlayResY=1920 / FontSize=60（真像素）
+- **不再用 FontSize=9 的 384 空间**；旧文 MarginV=280 为 ASS 旧参数，当前烧录以 config `subtitle.margin_bottom=400` 为准（subtitle_burn.py 读它）
 - SRT 从 edge-tts VTT 生成（真实音频时间轴，非估算）
 - 烧录方式：PIL 渲染黑底白字 PNG（固定 BAR_HEIGHT=300px） → h264 字幕视频 → colorkey 抠黑 → overlay
 - 折行硬规矩：
@@ -92,5 +92,5 @@
 - 只进 ~/lishishuo/.env 环境变量，不进仓库
 
 ## 成片归档
-- ~/Desktop/历史说/成片/{期号}-{标题}/
+- 归档根目录以 config `output.library_root` 为准（web 高级设置「素材库归档根目录」可改），旧文"~/Desktop/历史说/"为早期示例已过时
 - 素材归档 ~/Desktop/历史说素材/（成片/图片/录音/稿子 四类）
