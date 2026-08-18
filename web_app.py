@@ -356,8 +356,10 @@ def run_pipeline(params):
             cmd += ["--name", params["name"]]
         if params.get("style"):
             cmd += ["--style", params["style"]]  # GL-20260817-03：风格预设（story/short）
-        if params.get("rate"):
-            cmd += ["--rate", str(params["rate"])]  # GL-20260818 D3：手动语速优先（覆盖风格）
+        # GL-20260818 D3：手动语速优先——config tts.rate_manual 持久化标记生效时传 --rate
+        _tcfg = load_cfg().get("tts", {})
+        if _tcfg.get("rate_manual") and _tcfg.get("rate"):
+            cmd += ["--rate", str(_tcfg["rate"])]
 
         log(f"▶ 开始制作：{' '.join(cmd[2:])}")
 
@@ -890,6 +892,9 @@ class Handler(BaseHTTPRequestHandler):
                     cfg.setdefault("tts", {})["rate"] = normalize_rate(adv["rate"])
                 except ValueError as e:
                     return self._json({"ok": False, "msg": str(e)})
+            if "rate_manual" in adv:
+                # GL-20260818 D3：手动改过语速 → 持久化优先标记（刷新/重开不丢）
+                cfg.setdefault("tts", {})["rate_manual"] = bool(adv["rate_manual"])
             if "library_root" in adv:
                 cfg.setdefault("output", {})["library_root"] = adv["library_root"]
             if "video_source_root" in adv and adv["video_source_root"]:
