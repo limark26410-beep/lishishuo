@@ -1,0 +1,8 @@
+# 历史说 · 出片工具 依赖清单（同事安装兜底：pip install -r requirements.txt）
+# 启动脚本会自动安装，此文件供手动/排查使用
+pyyaml
+pillow
+edge-tts
+requests
+python-docx
+aiohttp
