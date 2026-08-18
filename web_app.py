@@ -356,6 +356,8 @@ def run_pipeline(params):
             cmd += ["--name", params["name"]]
         if params.get("style"):
             cmd += ["--style", params["style"]]  # GL-20260817-03：风格预设（story/short）
+        if params.get("rate"):
+            cmd += ["--rate", str(params["rate"])]  # GL-20260818 D3：手动语速优先（覆盖风格）
 
         log(f"▶ 开始制作：{' '.join(cmd[2:])}")
 

@@ -845,6 +845,8 @@ def main():
     parser.add_argument("--no-archive", action="store_true", help="不归档到素材库")
     parser.add_argument("--style", default=None,
                         help="风格预设（config.yaml style.presets 的键，如 story/short；缺省用 style.default）")
+    parser.add_argument("--rate", default=None,
+                        help="手动语速（GL-20260818 D3：显式指定则优先于风格预设，如 --rate +5%%）")
     parser.add_argument("--only", choices=["subtitle", "title", "encode"],
                         help="只重跑某一步（需已有中间产物）")
     args = parser.parse_args()
@@ -858,6 +860,12 @@ def main():
 
     # GL-20260817-03：应用风格预设（deep-merge 进 cfg，之后全链路照跑；故事=不覆盖=现状）
     apply_style_preset(cfg, getattr(args, "style", None))
+
+    # GL-20260818 D3：手动语速优先——显式 --rate 覆盖风格预设的语速
+    if getattr(args, "rate", None):
+        from tts_utils import normalize_rate
+        cfg.setdefault("tts", {})["rate"] = normalize_rate(args.rate)
+        print(f"  ▶ 手动语速优先: {cfg['tts']['rate']}（覆盖风格预设）")
 
     episode_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                "episodes", args.episode)

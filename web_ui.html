@@ -242,7 +242,7 @@
         <div><label>TTS 声线</label>
           <select id="a_voice"><option value="zh-CN-YunjianNeural">云健 · 男声 · 沉稳解说（当前）</option></select>
         </div>
-        <div><label>TTS 语速</label><input type="text" id="a_rate" value="-4%" placeholder="如 +28% 加速 / -4% 减速"><div class="hint" style="display:block;margin-top:2px">须带正负号：+28% 加速、-4% 减速；2 倍速写 +100%（填 28% 会自动按 +28% 处理）</div></div>
+        <div><label>TTS 语速</label><input type="text" id="a_rate" value="-4%" placeholder="如 +28% 加速 / -4% 减速" oninput="this.dataset.touched=1"><div class="hint" style="display:block;margin-top:2px">须带正负号：+28% 加速、-4% 减速；2 倍速写 +100%；手动改过则优先于风格预设（GL-20260818 D3）</div></div>
         <div><label>生图模型</label>
           <select id="a_model">
             <optgroup label="通义万相">
@@ -760,6 +760,7 @@ async function start(){
     series: $('series').value.trim(),
     title_bg: $('titlebg').value.trim(),
     style: $('a_style').value,   // GL-20260817-03：风格预设（story/short）
+    rate: ($('a_rate').dataset && $('a_rate').dataset.touched === '1') ? $('a_rate').value : '',  // GL-20260818 D3：手动改过语速才传
   };
   // GL-20260817-01：图片来源三选一显式分支（消除隐式触发）
   const src = document.querySelector('input[name=imgsrc]:checked').value;
