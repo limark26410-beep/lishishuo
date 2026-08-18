@@ -69,6 +69,16 @@ def _deep_merge(base: dict, override: dict) -> None:
             base[k] = v
 
 
+def _tag_emotions_safe(segments: list):
+    """段落情绪标注（图片/视频模式共用，失败返回 None 不阻断）"""
+    try:
+        from emotion_tag import tag_emotions
+        return tag_emotions(segments, os.environ.get("DEEPSEEK_API_KEY", ""))
+    except Exception as e:  # noqa: BLE001
+        print(f"  ⚠ 情绪标注失败（{type(e).__name__}: {e}）")
+        return None
+
+
 def _build_bgm_map(bgm_cfg: dict) -> dict:
     """扫描配乐库根目录下的情绪子目录，返回 {情绪: 乐文件路径}。
 
@@ -273,20 +283,57 @@ def step_mix(episode_dir: str, tts_result: dict, img_result: dict, cfg: dict) ->
     for i, d in enumerate(clip_durations):
         print(f"    [{i+1:02d}] {_time_str(d)} | {Path(image_paths[i]).name}")
 
-    # ── 3c. Ken Burns 逐段生成 ──
+    # ── 3c. Ken Burns 逐段生成（5b-2：按段落情绪调速）──
     print(f"\n  生成 Ken Burns clips...")
+    # 图片 → 段落情绪映射（稿子分段 + 情绪标注；失败则全部用全局参数）
+    seg_emotions = None
+    bounds = None
+    try:
+        from script_seg import split_segments, segment_audio_bounds
+        script_path = os.path.join(episode_dir, "script.txt")
+        with open(script_path, encoding="utf-8") as f:
+            body = f.read()
+        segments = split_segments(body)
+        if segments:
+            bounds = segment_audio_bounds(segments, subs_srt)
+            seg_emotions = _tag_emotions_safe(segments)
+            if not (bounds and seg_emotions and len(bounds) == len(seg_emotions)):
+                bounds, seg_emotions = None, None
+    except Exception as e:  # noqa: BLE001
+        print(f"  ⚠ 段落切分失败（{type(e).__name__}: {e}），Ken Burns 用全局参数")
+        bounds, seg_emotions = None, None
+
+    kb_emo = ken_cfg.get("emotions", {})
     clip_paths = []
     for i, (img_path, dur) in enumerate(zip(image_paths, clip_durations)):
         clip_out = os.path.join(clips_dir, f"clip_{i+1:03d}.mp4")
-        print(f"  [{i+1}/{num_images}] {Path(img_path).name} -> {_time_str(dur)}")
+        # 图片起点 → 所属段落情绪 → 动效参数
+        emotion = None
+        if seg_emotions and bounds:
+            start_t = sum(clip_durations[:i]) + dur / 2  # 用图片中点对齐段落
+            for b, e in zip(bounds, seg_emotions):
+                if start_t < b[1]:
+                    emotion = e["emotion"]
+                    break
+            else:
+                emotion = seg_emotions[-1]["emotion"]
+        if emotion:
+            ep = kb_emo.get(emotion, {})
+            zoom_end = ep.get("zoom_end", ken_cfg.get("zoom_end", 1.08))
+            pan_speed = ep.get("pan_speed", ken_cfg.get("pan_speed", 0.0004))
+        else:
+            zoom_end = ken_cfg.get("zoom_end", 1.08)
+            pan_speed = ken_cfg.get("pan_speed", 0.0004)
+        print(f"  [{i+1}/{num_images}] {Path(img_path).name} -> {_time_str(dur)}"
+              + (f" [{emotion} zoom={zoom_end}]" if emotion else ""))
         build_ken_burns_clip(
             image_path=img_path,
             output_path=clip_out,
             duration=dur,
             cfg=cfg,
             width=width, height=height, fps=fps,
-            zoom_end=ken_cfg.get("zoom_end", 1.08),
-            pan_speed=ken_cfg.get("pan_speed", 0.0004),
+            zoom_end=zoom_end,
+            pan_speed=pan_speed,
             preview_scale=ken_cfg.get("preview_scale", 2),
         )
         clip_paths.append(clip_out)
@@ -415,14 +462,7 @@ def _video_step_mix(episode_dir: str, tts_result: dict, cfg: dict) -> str:
         print(f"    [{s['index']}] {_time_str(d)} | {s['text'][:26]}…")
 
     # ── 3v1b. 段落情绪标注（5a 分段配乐 + 5b-1 混合转场共用，失败不阻断）──
-    seg_emotions = None
-    try:
-        from emotion_tag import tag_emotions
-        seg_emotions = tag_emotions(
-            segments, os.environ.get("DEEPSEEK_API_KEY", ""))
-    except Exception as e:
-        print(f"  ⚠ 情绪标注失败（{type(e).__name__}: {e}），跳过情绪相关功能")
-        seg_emotions = None
+    seg_emotions = _tag_emotions_safe(segments)
 
     # ── 3v2. 素材清单 + 池时长校验 ──
     from material_scanner import scan_material

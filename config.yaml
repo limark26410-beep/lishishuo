@@ -45,6 +45,11 @@ video:
     zoom_end: 1.08
     pan_speed: 0.0004
     preview_scale: 2
+    emotions:             # GL-20260817-05 5b-2：按段落情绪调速（图片模式）
+      悬念: {zoom_end: 1.10, pan_speed: 0.0003}
+      平叙: {zoom_end: 1.08, pan_speed: 0.0004}
+      高潮: {zoom_end: 1.18, pan_speed: 0.0008}
+      收束: {zoom_end: 1.06, pan_speed: 0.0003}
   xfade:
     transition: fade
     duration: 1.0
