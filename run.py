@@ -1001,7 +1001,22 @@ def main():
                 series_name = m.group(1)
         if not series_name:
             series_name = cfg.get("title_card", {}).get("series_name", "上下五千年")
-        series = f"{series_name} · 第{int(args.episode)}期"
+        # 系列期数：优先从稿子标题提取（"十大名将 第1期 白起·不败战神"→1；
+        # "决战五千年 第4期 桂陵·马陵之战·孙庞斗智"→4），缺省回退流水线期号
+        import re as _re3
+        _ep_num = None
+        try:
+            _hdr3 = open(os.path.join(episode_dir, "script.txt"),
+                         encoding="utf-8").readline().strip()
+            _m3 = _re3.match(r"^[\u4e00-\u9fff]{2,8}\s*第\s*(\d+)\s*期", _hdr3)
+            if _m3:
+                _ep_num = int(_m3.group(1))
+                print(f"  (系列期数自动取自稿子: 第{_ep_num}期)")
+        except Exception:
+            pass
+        if _ep_num is None:
+            _ep_num = int(args.episode)
+        series = f"{series_name} · 第{_ep_num}期"
         try:
             _bg = getattr(args, "title_bg", None)
             if _bg and os.path.exists(_bg):
