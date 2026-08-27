@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/Users/local/lishishuo/venv/bin/python3
 # -*- coding: utf-8 -*-
 """自动抓取视频素材入库（YouTube 为主，非商用）。
 
