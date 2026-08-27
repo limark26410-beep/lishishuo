@@ -303,6 +303,17 @@ def _get_env_key(prefix: str) -> str:
     return ""
 
 
+def _suggest_keywords(script_text: str, api_key: str) -> str:
+    """GL-20260827：读稿子 → DeepSeek 生成视频素材搜索关键词（中英结合）"""
+    from lib.ai_script_gen import _call_qwen, _extract_json
+    system = (
+        "你是视频素材搜索关键词生成器。根据稿子内容给出 2-3 个视频搜索关键词，"
+        "中英结合（英文命中率高），反映稿子的核心画面主题（人物/战争/城市/器物等），"
+        "不含年份、不含广告词。只输出 JSON：{\"keywords\": \"...\"}")
+    content = _call_qwen(system, (script_text or "")[:1500], api_key)
+    return (_extract_json(content).get("keywords") or "").strip()
+
+
 def run_pipeline(params):
     """后台线程跑流水线"""
     TASK.update({"running": True, "logs": [], "step": "准备中",
@@ -356,6 +367,13 @@ def run_pipeline(params):
             cmd += ["--name", params["name"]]
         if params.get("style"):
             cmd += ["--style", params["style"]]  # GL-20260817-03：风格预设（story/short）
+        # GL-20260827：抓视频素材（先抓后走视频模式）
+        if params.get("fetch_keyword"):
+            cmd += ["--fetch-keyword", params["fetch_keyword"]]
+            if params.get("fetch_topic"):
+                cmd += ["--fetch-topic", params["fetch_topic"]]
+            cmd += ["--fetch-count", str(int(params.get("fetch_count") or 3))]
+            cmd += ["--fetch-clip-seconds", str(int(params.get("fetch_clip_seconds") or 90))]
         # GL-20260818 D3：手动语速优先——config tts.rate_manual 持久化标记生效时传 --rate
         _tcfg = load_cfg().get("tts", {})
         if _tcfg.get("rate_manual") and _tcfg.get("rate"):
@@ -834,6 +852,7 @@ class Handler(BaseHTTPRequestHandler):
                 "image_count": len(result["image_prompts"]),
                 "series_name": result["series_name"],
                 "episode_name": result["episode_name"],
+                "fetch_keywords": result.get("fetch_keywords", ""),
             })
 
         if u.path == "/api/ai-start":
@@ -847,6 +866,22 @@ class Handler(BaseHTTPRequestHandler):
             data["ai_mode"] = True
             threading.Thread(target=run_pipeline, args=(data,), daemon=True).start()
             return self._json({"ok": True})
+
+        if u.path == "/api/fetch-suggest":
+            """GL-20260827：读稿子 → 生成视频素材搜索关键词（AI 预填）"""
+            script_path = data.get("script_path", "")
+            if not script_path or not os.path.exists(script_path):
+                return self._json({"ok": False, "error": "稿子路径无效"})
+            api_key = _get_env_key("DEEPSEEK_API_KEY")
+            if not api_key:
+                return self._json({"ok": False,
+                                   "error": "未配置 DEEPSEEK_API_KEY，请到高级设置里填写"})
+            try:
+                text = open(script_path, encoding="utf-8").read()
+                kw = _suggest_keywords(text, api_key)
+                return self._json({"ok": True, "keywords": kw})
+            except Exception as e:
+                return self._json({"ok": False, "error": f"生成失败：{e}"})
 
         if u.path == "/api/start":
             if TASK["running"]:

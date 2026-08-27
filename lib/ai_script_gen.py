@@ -48,6 +48,9 @@ def _build_messages(instruction, duration_min, image_count, series_name, style_a
 6. 同时生成 {image_count} 个生图提示词，每个是一句完整的中文描述，风格统一为"中国古风，水墨质感，纪录片氛围，无文字"。
 7. 系列名默认「{series_name}」，除非用户指令明确指定其他系列。
 {anchor_line}
+8. fetch_keywords：给出 2-3 个用于搜索视频素材画面的关键词（YouTube 搜索用），
+   中英结合（英文命中率高），要能反映稿子的核心画面主题（人物/战争/城市/器物等），
+   如"信陵君 战国 合纵 ancient china war"。不含年份、不含广告词。
 你必须严格按以下 JSON 格式输出（不要输出任何其他文字，只输出 JSON）：
 
 {{
@@ -56,7 +59,8 @@ def _build_messages(instruction, duration_min, image_count, series_name, style_a
  "script_body": "正文全部内容，自然段落分行，含收尾",
  "image_prompts": ["提示词1", "提示词2", ...],
  "series_name": "系列名",
- "episode_name": "归档名建议，如'17-李白'"
+ "episode_name": "归档名建议，如'17-李白'",
+ "fetch_keywords": "视频素材搜索关键词，如'ancient china war 战国战争'"
 }}"""
     return system, instruction
 
@@ -172,6 +176,7 @@ def generate_script(instruction, duration_min=3, api_key="",
         "char_count": char_count,
         "series_name": series,
         "episode_name": ep_name,
+        "fetch_keywords": (data.get("fetch_keywords") or "").strip(),
     }
 
 

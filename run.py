@@ -842,6 +842,12 @@ def main():
     parser.add_argument("--name", help="归档名，如 '16-唐朝'（缺省用期号）")
     parser.add_argument("--images-dir", help="本地图片目录（指定则不生图）")
     parser.add_argument("--video-dir", help="视频模式素材目录（指定则走视频混剪，不生成图片）")
+    parser.add_argument("--fetch-keyword", default=None,
+                        help="GL-20260827：抓视频素材关键词（自动搜YouTube→下载入库→走视频模式）")
+    parser.add_argument("--fetch-topic", default=None, help="抓取素材题材目录（默认=关键词首词）")
+    parser.add_argument("--fetch-count", type=int, default=3, help="抓取片段数（默认3）")
+    parser.add_argument("--fetch-clip-seconds", type=int, default=90,
+                        help="每片段截取秒数（默认90）")
     parser.add_argument("--no-archive", action="store_true", help="不归档到素材库")
     parser.add_argument("--style", default=None,
                         help="风格预设（config.yaml style.presets 的键，如 story/short；缺省用 style.default）")
@@ -876,6 +882,23 @@ def main():
         cfg.setdefault("video", {})["mode"] = "clip"
         cfg.setdefault("video_source", {})["root"] = os.path.expanduser(args.video_dir)
         print(f"  ▶ 视频模式：素材库 {cfg['video_source']['root']}")
+
+    # GL-20260827：抓视频素材——先自动搜 YouTube 下载入库，再走视频模式（流程其余不变）
+    fetch_kw = getattr(args, "fetch_keyword", None)
+    if fetch_kw:
+        from lib.fetch_materials import fetch_by_keyword
+        topic = getattr(args, "fetch_topic", None) or fetch_kw.split()[0]
+        count = getattr(args, "fetch_count", None) or 3
+        clip_sec = getattr(args, "fetch_clip_seconds", None) or 90
+        lib_root = os.path.expanduser(
+            cfg.get("video_source", {}).get("root", "~/Desktop/历史说素材/视频/"))
+        print(f"  ▶ 抓取素材：「{fetch_kw}」{count} 个片段 → {lib_root}/{topic}")
+        fetch_by_keyword(fetch_kw, topic, count, clip_sec, root=lib_root,
+                         progress=lambda m: print(f"    {m}"))
+        cfg.setdefault("video", {})["mode"] = "clip"
+        cfg.setdefault("video_source", {})["root"] = os.path.join(lib_root, topic)
+        video_mode = True
+        print(f"  ▶ 视频模式：素材库 {cfg['video_source']['root']}（刚抓取）")
 
     if not os.path.exists(os.path.join(episode_dir, "script.txt")):
         print(f"❌ {episode_dir}/script.txt 不存在")

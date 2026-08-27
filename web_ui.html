@@ -126,6 +126,7 @@
         <label><input type="radio" name="imgsrc" value="generate" checked onchange="toggleImg()"> 自动生图</label>
         <label><input type="radio" name="imgsrc" value="local" onchange="toggleImg()"> 本地图片</label>
         <label><input type="radio" name="imgsrc" value="video" onchange="toggleImg()"> 视频素材库</label>
+        <label><input type="radio" name="imgsrc" value="fetch" onchange="toggleImg()"> 抓视频素材</label>
       </div>
       <div id="imgDirBox" style="display:none;margin-top:10px">
         <div class="flex">
@@ -156,6 +157,31 @@
             </select>
           </div>
           <div class="hint">选了题材只在该题材目录里轮播；留空=整个素材库轮播</div>
+        </div>
+      </div>
+      <!-- GL-20260827：抓视频素材（自动搜 YouTube → 下载入库 → 视频模式混剪） -->
+      <div id="fetchBox" style="display:none;margin-top:10px">
+        <div class="row">
+          <label>搜索关键词</label>
+          <div class="flex">
+            <input type="text" id="a_fetch_kw" placeholder="选稿子后自动生成，可手动改">
+            <button class="ghost" onclick="suggestFetchKeywords()">从稿子生成</button>
+          </div>
+          <div class="hint">AI 根据稿子自动生成（中英结合），可手动修改；决定抓什么样的画面</div>
+        </div>
+        <div class="row">
+          <label>题材目录</label>
+          <div class="flex">
+            <input type="text" id="a_fetch_topic" placeholder="默认=关键词首词">
+          </div>
+          <div class="hint">素材入库分类名（自动建目录）</div>
+        </div>
+        <div class="row">
+          <label>片段数量</label>
+          <div class="flex">
+            <input type="number" id="a_fetch_count" value="3" min="1" max="8" style="width:100px">
+          </div>
+          <div class="hint">抓几个片段（每个约 1-2 分钟；下载耗时约 1-2 分钟/个）</div>
         </div>
       </div>
     </div>
@@ -408,6 +434,20 @@ function toggleImg(){
   const v = document.querySelector('input[name=imgsrc]:checked').value;
   $('imgDirBox').style.display = v === 'local' ? 'block' : 'none';
   $('videoBox').style.display = v === 'video' ? 'block' : 'none'; // GL-20260817-01：视频素材库显式三选一
+  $('fetchBox').style.display = v === 'fetch' ? 'block' : 'none'; // GL-20260827：抓视频素材
+}
+
+// GL-20260827：AI 根据稿子生成视频素材搜索关键词（预填，可手动改）
+async function suggestFetchKeywords(){
+  const sp = $('script').value.trim();
+  if(!sp){ alert('请先选稿子'); return; }
+  const r = await post('/api/fetch-suggest', {script_path: sp});
+  if(r.ok && r.keywords){
+    $('a_fetch_kw').value = r.keywords;
+    if(!$('a_fetch_topic').value.trim()) $('a_fetch_topic').value = r.keywords.trim().split(/[\s,，]+/)[0];
+  } else {
+    alert(r.error || '生成失败');
+  }
 }
 
 async function post(url, data){
@@ -599,6 +639,7 @@ async function aiGenerate(){
       title: r.title,
       episode_name: r.episode_name,
       series_name: r.series_name,
+      fetch_keywords: r.fetch_keywords || '',  // GL-20260827：素材搜索关键词（AI 预填）
     };
     $('aiPreviewTitle').textContent = r.title || '稿子生成完毕';
     $('aiPreviewMeta').textContent = `${r.char_count} 字 · ${r.image_count} 张图 · 期号 ${r.episode_id}`;
@@ -633,6 +674,14 @@ async function aiConfirm(){
   $('title').value = d.title || '';
   $('name').value = d.episode_name || '';
   $('series').value = d.series_name || '';
+
+  // GL-20260827：AI 出稿顺带的关键词预填（选「抓视频素材」时直接用，可改）
+  if(d.fetch_keywords){
+    $('a_fetch_kw').value = d.fetch_keywords;
+    if(!$('a_fetch_topic').value.trim()){
+      $('a_fetch_topic').value = d.fetch_keywords.trim().split(/[\s,，]+/)[0];
+    }
+  }
 
   // 标记已填过（防止后续自动覆盖）
   $('episode').dataset.touched = '1';
@@ -773,6 +822,13 @@ async function start(){
     if(!root){ alert('请先填视频素材库根目录'); return; } // GL-20260817-01 第五节：空根目录守卫，防静默回退图片模式
     const topic = $('a_video_topic') ? $('a_video_topic').value : '';
     params.video_dir = topic ? root + '/' + topic : root; // 题材留空=整个素材库轮播
+  } else if(src === 'fetch'){
+    // GL-20260827：抓视频素材（自动搜 YouTube → 入库 → 视频模式混剪）
+    const kw = ($('a_fetch_kw').value || '').trim();
+    if(!kw){ alert('请填搜索关键词（可点「从稿子生成」）'); return; }
+    params.fetch_keyword = kw;
+    params.fetch_topic = ($('a_fetch_topic').value || '').trim();
+    params.fetch_count = parseInt($('a_fetch_count').value) || 3;
   }
   if(!params.episode || !params.script_path){
     alert('请填期号和稿子路径'); return;
