@@ -28,6 +28,25 @@ def _fmt_dur(sec: int) -> str:
     return f"{sec // 60}分{sec % 60:02d}s"
 
 
+def _is_av1(path: str) -> bool:
+    """检测视频是否为 AV1 编码（macOS 播放器不兼容）"""
+    r = subprocess.run(["ffmpeg", "-i", path], capture_output=True, text=True)
+    low = (r.stderr or "").lower()
+    return "av1" in low or "av01" in low
+
+
+def _to_h264(path: str) -> None:
+    """AV1 → H.264 转码（保证任何播放器可打开）"""
+    tmp = path + ".h264.mp4"
+    subprocess.run(
+        ["ffmpeg", "-y", "-loglevel", "error", "-i", path,
+         "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+         "-c:a", "aac", "-b:a", "128k", tmp],
+        check=True, capture_output=True, text=True)
+    os.remove(path)
+    os.replace(tmp, path)
+
+
 def search(keyword: str, count: int, dur_max: int):
     opts = {
         "quiet": True, "no_warnings": True, "proxy": "",
@@ -61,9 +80,11 @@ def download(url: str, topic: str, start: str, end: str, desc: str,
 
     # 注：yt-dlp download_sections 在本机不生效（会下全片），
     # 改为：下载完整（限高控大小）→ ffmpeg 本地截取 → 删原片
+    # 兼容性：排除 AV1（vcodec!=av01），优先 H.264——macOS/手机播放器都支持
     opts = {
         "quiet": True, "no_warnings": True, "proxy": "",
-        "format": f"bv*[height<={max_height}]+ba/b[height<={max_height}]",
+        "format": (f"bv*[height<={max_height}][vcodec!=av01]"
+                   f"+ba/b[height<={max_height}][vcodec!=av01]"),
         "merge_output_format": "mp4",
         "outtmpl": outtmpl,
     }
@@ -76,6 +97,11 @@ def download(url: str, topic: str, start: str, end: str, desc: str,
         print("❌ 下载后未找到文件")
         sys.exit(1)
     full_path = os.path.join(outdir, files[0])
+
+    # 兜底：若仍是 AV1 编码（播放器打不开）→ 转 H.264
+    if _is_av1(full_path):
+        print("  ⚠ 检测到 AV1 编码（播放器可能打不开），转 H.264…")
+        _to_h264(full_path)
 
     # 时间段截取（ffmpeg 本地切，更可靠）
     if start and end:
