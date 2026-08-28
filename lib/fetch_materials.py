@@ -9,6 +9,7 @@
 工具脚本 tools/fetch_video_materials.py 是本模块的 CLI 包装。
 """
 import os
+import re
 import subprocess
 
 import yt_dlp
@@ -46,6 +47,7 @@ def search(keyword: str, count: int, dur_max: int = 0) -> list:
         "quiet": True, "no_warnings": True, "proxy": "",
         "extract_flat": "in_playlist", "skip_download": True,
         "playlist_items": f"1-{count}",
+        "socket_timeout": 15, "retries": 1,  # 网络挂时快速失败不卡死
     }
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(f"ytsearch{count}:{keyword}", download=False)
@@ -129,17 +131,40 @@ def fetch_by_keyword(keyword: str, topic: str, count: int = 3,
                      progress=None) -> list:
     """按关键词自动抓 N 个片段入库（流水线集成用）。
 
-    只选时长 ≤ max_duration（默认 10 分钟）的视频——避免下载整段长纪录片
-    （下载完整再截取，长视频流量/磁盘不可接受）。每个视频从 20% 处截取
-    clip_seconds 秒（避开片头/片尾），返回入库文件路径列表。
+    - 关键词按逗号/分号拆成多个搜索词，逐词搜索合并候选（AI 生成的关键词
+      往往又长又碎，单次搜索命中差）
+    - 优先选时长 ≤ max_duration 的视频（避免长片大下载）；无短片时降级取
+      最短的长片（提示可能较大），不直接报错
+    - 每个视频从 20% 处截取 clip_seconds 秒（避开片头/片尾）
     """
     if progress is None:
         progress = print
-    progress(f"🔍 搜索「{keyword}」（限时 {max_duration // 60} 分钟内）…")
-    entries = search(keyword, count=count * 5, dur_max=max_duration)
-    usable = [e for e in entries if e.get("id")]
-    if not usable:
-        raise RuntimeError(f"搜索「{keyword}」无可用结果（{max_duration // 60} 分钟内）")
+
+    terms = [t.strip() for t in re.split(r"[,，;；]", keyword) if t.strip()][:3]
+    if not terms:
+        terms = [keyword[:60]]
+
+    all_entries, seen = [], set()
+    for t in terms:
+        try:
+            for e in search(t, count=count * 4):  # 先不限时长收集候选
+                if e.get("id") and e["id"] not in seen:
+                    seen.add(e["id"])
+                    all_entries.append(e)
+        except Exception as ex:
+            progress(f"  ⚠ 搜索「{t}」失败: {type(ex).__name__}，换下一组词")
+    if not all_entries:
+        raise RuntimeError(f"搜索「{keyword}」全部无结果（网络/关键词问题），换个关键词试试")
+
+    short = [e for e in all_entries if (e.get("duration") or 0) <= max_duration]
+    if short:
+        usable = short
+        progress(f"🔍 关键词拆分为 {len(terms)} 组，合并候选 {len(all_entries)} 条"
+                 f"（其中 {max_duration // 60} 分钟内 {len(short)} 条）")
+    else:
+        usable = sorted(all_entries, key=lambda e: e.get("duration") or 0)[:count]
+        progress(f"⚠ 无 {max_duration // 60} 分钟内的视频，降级取最短的 "
+                 f"{len(usable)} 个（长片下载量大）")
 
     downloaded = []
     for i, e in enumerate(usable[:count]):
