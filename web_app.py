@@ -682,7 +682,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"configured": False, "masked": ""})
 
         elif u.path == "/api/config":
-            self._json(load_cfg())
+            cfg = load_cfg()
+            # GL-20260828：返回创作类型默认值（前端选类型联动用）
+            cfg.setdefault("content_types", {"default": "故事", "presets": {}})
+            self._json(cfg)
         elif u.path == "/api/dropbox":
             """GL-20260814-04：投递目录配置 + 最近处理记录"""
             dcfg = _dropbox_cfg()
@@ -828,6 +831,7 @@ class Handler(BaseHTTPRequestHandler):
                     instruction, duration_min, api_key,
                     series_name=cfg.get("title_card", {}).get("series_name", "上下五千年"),
                     style_anchor=cfg.get("image", {}).get("style_anchor", ""),
+                    ctype=(data.get("ctype") or cfg.get("content_types", {}).get("default", "故事")),
                 )
             except AIScriptError as e:
                 return self._json({"ok": False, "msg": str(e)})

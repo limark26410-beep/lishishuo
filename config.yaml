@@ -17,6 +17,24 @@ tts:
   voice: zh-CN-YunjianNeural
   rate: -4%
   subtitle_format: vtt
+  emotion_rates: {}
+
+# GL-20260828：创作类型（内容配方：写稿/配音/风格/关键词按类型匹配）
+content_types:
+  default: 故事
+  presets:
+    商品:
+      voice: zh-CN-XiaoxiaoNeural
+      rate: +5%
+      style: short
+    故事:
+      voice: zh-CN-YunjianNeural
+      rate: -4%
+      style: story
+    营销:
+      voice: zh-CN-YunxiNeural
+      rate: +50%
+      style: short
   # GL-20260817-05 5b-3：段落级语速（按段落情绪自动套用；留空=整篇统一语速）
   emotion_rates: {}
 image:

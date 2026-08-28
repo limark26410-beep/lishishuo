@@ -112,6 +112,16 @@
     </div>
 
     <div class="row">
+      <label>创作类型</label>
+      <select id="a_ctype" onchange="applyCtype()" style="flex:1">
+        <option value="故事">故事（人物/历史·纪录片感）</option>
+        <option value="商品">商品（带货/测评·说服力）</option>
+        <option value="营销">营销（品牌/引流·节奏感）</option>
+      </select>
+      <div class="hint">决定写稿风格、素材关键词、配音声线/语速（可手动改，改过优先）</div>
+    </div>
+
+    <div class="row">
       <label>风格</label>
       <select id="a_style" style="flex:1">
         <option value="story">故事风格（长片·舒缓）</option>
@@ -390,6 +400,11 @@ async function loadCfg(){
     if(c.video?.encoder_options?.libx264) $('a_crf').value = c.video.encoder_options.libx264.crf ?? 26;
     if(c.tts){ if(c.tts.voice && [...$('a_voice').options].some(o=>o.value===c.tts.voice)) $('a_voice').value=c.tts.voice; $('a_rate').value = c.tts.rate || ''; }
     if(c.style?.default && [...$('a_style').options].some(o=>o.value===c.style.default)) $('a_style').value = c.style.default; // GL-20260817-03：风格默认值回填
+    // GL-20260828：创作类型回填 + 按类型预填默认值
+    window._contentTypes = c.content_types || {default:'故事', presets:{}};
+    const ctDefault = window._contentTypes.default || '故事';
+    if([...$('a_ctype').options].some(o=>o.value===ctDefault)) $('a_ctype').value = ctDefault;
+    applyCtype();
     if(c.output?.library_root) $('a_root').value = c.output.library_root;
     if(c.video_source?.root) $('a_video_root').value = c.video_source.root;
     if(c.image?.tongyi){
@@ -445,6 +460,19 @@ function toggleImg(){
   $('imgDirBox').style.display = v === 'local' ? 'block' : 'none';
   $('videoBox').style.display = v === 'video' ? 'block' : 'none'; // GL-20260817-01：视频素材库显式三选一
   $('fetchBox').style.display = v === 'fetch' ? 'block' : 'none'; // GL-20260827：抓视频素材
+}
+
+// GL-20260828：创作类型 → 预填风格/语速/声线 + 写稿提示（手动改过优先）
+function applyCtype(){
+  const t = $('a_ctype').value;
+  const p = (window._contentTypes && window._contentTypes.presets) ? window._contentTypes.presets[t] : null;
+  if(p){
+    if(p.style && [...$('a_style').options].some(o=>o.value===p.style)) $('a_style').value = p.style;
+    if(p.rate) $('a_rate').value = p.rate;
+    if(p.voice && [...$('a_voice').options].some(o=>o.value===p.voice)) $('a_voice').value = p.voice;
+  }
+  const hints = {商品:'卖什么？如：中发电子市场的黄酒', 故事:'讲什么故事？如：李白的一生', 营销:'推广什么？如：中发电子市场招商'};
+  if($('aiInstruction')) $('aiInstruction').placeholder = hints[t] || '';
 }
 
 // GL-20260827：AI 根据稿子生成视频素材搜索关键词（预填，可手动改）
@@ -638,7 +666,7 @@ async function aiGenerate(){
   $('aiPreview').style.display = 'none';
 
   try {
-    const r = await post('/api/ai-generate', {instruction, duration_min: duration});
+    const r = await post('/api/ai-generate', {instruction, duration_min: duration, ctype: $('a_ctype').value});
     if(!r.ok){ $('aiGenHint').textContent = '❌ ' + r.msg; return; }
 
     // 存到变量，等用户点「确认」后再统一回填手动表单

@@ -30,11 +30,34 @@ class AIScriptError(Exception):
         self.raw = raw
 
 
-def _build_messages(instruction, duration_min, image_count, series_name, style_anchor):
-    """构造 system + user 消息。"""
+# GL-20260828：创作类型 → 写稿指令（追加进 system prompt）+ fetch_keywords 关键词风格
+_TYPE_INSTRUCTIONS = {
+    "商品": (
+        "【本次类型：商品带货/测评】\n"
+        "- 结构：卖点钩子（3秒）→ 场景痛点 → 产品亮点拆解（2-3个，多数据/对比）→ "
+        "使用体验 → 转化收尾（自然带出，不喊口号）\n"
+        "- 语气：口语化、有说服力、具体（尺寸/材质/效果数据），别空泛\n"
+        "- fetch_keywords 偏向产品实拍、使用场景、细节特写类画面词"),
+    "故事": (
+        "【本次类型：人物/历史故事】\n"
+        "- 结构：悬念钩子 → 时间线叙事（每段一个情节）→ 转折 → 情感共鸣金句收尾\n"
+        "- 语气：纪录片旁白、娓娓道来、有画面感，像导演在镜头前讲故事\n"
+        "- fetch_keywords 偏向纪录片、历史、人物场景类画面词"),
+    "营销": (
+        "【本次类型：品牌/引流营销】\n"
+        "- 结构：强钩子（3秒抓住）→ 痛点共鸣 → 价值主张 → 行动号召（自然收尾）\n"
+        "- 语气：短句、有力、节奏感强，像广告旁白\n"
+        "- fetch_keywords 偏向宣传片、品牌、高冲击画面类词"),
+}
+
+
+def _build_messages(instruction, duration_min, image_count, series_name,
+                    style_anchor, ctype="故事"):
+    """构造 system + user 消息。ctype: 商品/故事/营销（创作类型）"""
     anchor_line = ""
     if style_anchor:
         anchor_line = f'8. 生图提示词需额外融入风格描述：「{style_anchor}」。\n'
+    type_inst = _TYPE_INSTRUCTIONS.get(ctype) or _TYPE_INSTRUCTIONS["故事"]
     system = f"""你是一位专业的文史类短视频文案创作者，专为抖音/视频号平台撰写口播稿。
 
 你的文案风格：口语化、有故事感、有感染力、三秒钩子抓住观众。像一位纪录片导演在镜头前娓娓道来，而不是在念百科条目。
@@ -48,7 +71,8 @@ def _build_messages(instruction, duration_min, image_count, series_name, style_a
 6. 同时生成 {image_count} 个生图提示词，每个是一句完整的中文描述，风格统一为"中国古风，水墨质感，纪录片氛围，无文字"。
 7. 系列名默认「{series_name}」，除非用户指令明确指定其他系列。
 {anchor_line}
-8. fetch_keywords：给出 2-3 个用于搜索视频素材画面的关键词（YouTube 搜索用），
+{type_inst}
+8. fetch_keywords：给出 2-3 个用于搜索视频素材画面的关键词（YouTube/B站搜索用），
    中英结合（英文命中率高），要能反映稿子的核心画面主题（人物/战争/城市/器物等），
    如"信陵君 战国 合纵 ancient china war"。不含年份、不含广告词。
    强调：要的是纪录片/实拍画面类素材，不要歌曲MV/歌词视频/翻唱。
@@ -115,7 +139,7 @@ def _extract_json(text):
 
 
 def generate_script(instruction, duration_min=3, api_key="",
-                    series_name="上下五千年", style_anchor=""):
+                    series_name="上下五千年", style_anchor="", ctype="故事"):
     """
     调用 qwen-max 生成稿件。
 
@@ -148,7 +172,7 @@ def generate_script(instruction, duration_min=3, api_key="",
     image_count = max(6, (duration_min * 60) // 18)
 
     system, user = _build_messages(
-        instruction, duration_min, image_count, series_name, style_anchor)
+        instruction, duration_min, image_count, series_name, style_anchor, ctype)
     content = _call_qwen(system, user, api_key)
     data = _extract_json(content)
 
