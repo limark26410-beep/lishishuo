@@ -144,10 +144,16 @@ def fetch_by_keyword(keyword: str, topic: str, count: int = 3,
     if not terms:
         terms = [keyword[:60]]
 
+    # 过滤歌曲/歌词/翻唱类（画面是歌词字幕，混剪会叠字幕）
+    _SONG_HINTS = ("歌词", "翻唱", "Lyrics", "lyrics", "cover", "Cover",
+                   "MV", "mv", "动态歌词", "remix", "Remix", "OST",
+                   "主题曲", "片尾曲", "music video", "Music Video")
     all_entries, seen = [], set()
     for t in terms:
         try:
             for e in search(t, count=count * 4):  # 先不限时长收集候选
+                if any(h in (e.get("title") or "") for h in _SONG_HINTS):
+                    continue  # 跳过歌曲/歌词视频
                 if e.get("id") and e["id"] not in seen:
                     seen.add(e["id"])
                     all_entries.append(e)

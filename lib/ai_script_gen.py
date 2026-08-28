@@ -51,6 +51,7 @@ def _build_messages(instruction, duration_min, image_count, series_name, style_a
 8. fetch_keywords：给出 2-3 个用于搜索视频素材画面的关键词（YouTube 搜索用），
    中英结合（英文命中率高），要能反映稿子的核心画面主题（人物/战争/城市/器物等），
    如"信陵君 战国 合纵 ancient china war"。不含年份、不含广告词。
+   强调：要的是纪录片/实拍画面类素材，不要歌曲MV/歌词视频/翻唱。
 你必须严格按以下 JSON 格式输出（不要输出任何其他文字，只输出 JSON）：
 
 {{
