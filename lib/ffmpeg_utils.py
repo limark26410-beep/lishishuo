@@ -32,6 +32,16 @@ def get_media_duration(path: str) -> float:
     return h * 3600 + min_ * 60 + s
 
 
+def probe_video_size(path: str):
+    """探测视频分辨率 (w, h)，失败返回 None"""
+    r = subprocess.run(["ffmpeg", "-i", path], capture_output=True, text=True)
+    import re
+    m = re.search(r"Stream.*?Video:.*?(\d{3,5})x(\d{3,5})", r.stderr)
+    if not m:
+        return None
+    return int(m.group(1)), int(m.group(2))
+
+
 def _detect_platform_encoder(cfg: dict) -> tuple:
     """
     根据 config + 平台自动选择编码器参数
@@ -134,18 +144,29 @@ def build_video_clip(
     height: int = 1920,
     fps: int = 25,
     cfg: dict = None,
+    crop_keep: float = None,
 ) -> str:
     """
     截取视频片段 + 画幅适配 + 静音，输出规整竖屏片段
     - 输入侧 -ss 快速 seek（起点可能偏移 1 个 GOP，轮播素材无碍）
     - scale + crop 等比放大裁剪居中，不拉伸不变形
+    - crop_keep（GL-20260828 去原视频字幕）：横屏素材先垂直双端裁剪
+      （保留画面中间 crop_keep 比例，上下字幕带裁出画面），None=不裁
     - -an 静音（方案定稿默认静音，只留 TTS 配音 + BGM）
     - 编码参数对齐 build_ken_burns_clip（libx264/平台编码器、yuv420p、fps）
     """
     duration_sec = max(float(duration), 1.0)
+    vf_pre = ""
+    if crop_keep and 0 < crop_keep < 1:
+        size = probe_video_size(video_path)
+        if size and size[0] > size[1]:
+            # 横屏：先裁上下（保留中间 crop_keep），再放大填满竖屏
+            yoff = (1 - crop_keep) / 2
+            vf_pre = f"crop=iw:ih*{crop_keep}:0:ih*{yoff:.3f},"
     vf = (
-        f"scale={width}:{height}:force_original_aspect_ratio=increase,"
-        f"crop={width}:{height},setsar=1,fps={fps}"
+        vf_pre
+        + f"scale={width}:{height}:force_original_aspect_ratio=increase,"
+        + f"crop={width}:{height},setsar=1,fps={fps}"
     )
     encoder_args = _build_encoder_args(cfg or {})
     avail = get_media_duration(video_path)

@@ -549,6 +549,9 @@ def _video_step_mix(episode_dir: str, tts_result: dict, cfg: dict) -> str:
         clip_out = os.path.join(clips_dir, f"clip_{i+1:03d}.mp4")
         print(f"  [{i+1}/{len(plan)}] {mat['name']} "
               f"{_time_str(clip_dur)} @{start:.1f}s")
+        # GL-20260828：去原视频字幕（横屏素材上下双端裁剪，config video.crop_vertical 可调）
+        crop_cfg = video_cfg.get("crop_vertical", {}) or {}
+        crop_keep = crop_cfg.get("keep") if crop_cfg.get("enabled", True) else None
         build_video_clip(
             video_path=mat["path"],
             output_path=clip_out,
@@ -556,6 +559,7 @@ def _video_step_mix(episode_dir: str, tts_result: dict, cfg: dict) -> str:
             duration=clip_dur,
             width=width, height=height, fps=fps,
             cfg=cfg,
+            crop_keep=crop_keep,
         )
         clip_paths.append(clip_out)
 
