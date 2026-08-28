@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""自动抓取视频素材（YouTube 为主，非商用）——流水线集成版。
+"""自动抓取视频素材（YouTube / B站，非商用）——流水线集成版。
 
 核心函数：
-- search(keyword, count, dur_max)           搜索候选
-- download(url, topic, start, end, ...)     下载单条入库
-- fetch_by_keyword(keyword, topic, ...)     按关键词自动抓 N 个片段（流水线用）
+- search(keyword, count, dur_max, source)  搜索候选（youtube / bilibili）
+- download(url, topic, start, end, ...)    下载单条入库
+- fetch_by_keyword(keyword, topic, ...)    按关键词自动抓 N 个片段（流水线用）
 
 工具脚本 tools/fetch_video_materials.py 是本模块的 CLI 包装。
 """
@@ -15,6 +15,37 @@ import subprocess
 import yt_dlp
 
 DEFAULT_ROOT = os.path.expanduser("~/Desktop/历史说素材/视频/")
+
+# B 站 buvid cookie 缓存（防 412 反爬）
+_BVID_COOKIE = {"v": ""}
+
+
+def _get_buvid_cookie() -> str:
+    """取 B 站 buvid3 cookie（防 412 反爬），失败返回空串。
+
+    用公共 DNS（114.114.114.114）拿真实 IP + --resolve 直连 B 站主页，
+    绕过代理工具的假 DNS（198.18.x.x 劫持）。cookie 缓存复用。
+    """
+    if _BVID_COOKIE["v"]:
+        return _BVID_COOKIE["v"]
+    try:
+        r = subprocess.run(
+            ["nslookup", "www.bilibili.com", "114.114.114.114"],
+            capture_output=True, text=True, timeout=10)
+        ips = re.findall(r"Address: (\d+\.\d+\.\d+\.\d+)", r.stdout)
+        if not ips:
+            return ""
+        r2 = subprocess.run(
+            ["curl", "-s", "--max-time", "8",
+             "--resolve", f"www.bilibili.com:443:{ips[0]}",
+             "-D", "-", "-o", "/dev/null", "https://www.bilibili.com/"],
+            capture_output=True, text=True, timeout=15)
+        m = re.search(r"[Ss]et-[Cc]ookie: (buvid3=[^;]+)", r2.stdout)
+        if m:
+            _BVID_COOKIE["v"] = m.group(1)
+    except Exception:
+        pass
+    return _BVID_COOKIE["v"]
 
 
 def _fmt_dur(sec: int) -> str:
@@ -41,16 +72,34 @@ def _to_h264(path: str) -> None:
     os.replace(tmp, path)
 
 
-def search(keyword: str, count: int, dur_max: int = 0) -> list:
-    """YouTube 搜索，返回候选列表 [{title, duration, channel, id}]"""
+def search(keyword: str, count: int, dur_max: int = 0,
+           source: str = "youtube") -> list:
+    """搜索候选。source: youtube / bilibili。
+
+    返回 [{title, duration, channel, id}]。B 站用 bilisearch 完整提取
+    （extract_flat 下 B 站条目信息不全）+ Referer/buvid cookie 防 412。
+    """
+    headers = {}
+    if source == "bilibili":
+        headers = {"Referer": "https://www.bilibili.com/"}
+        ck = _get_buvid_cookie()
+        if ck:
+            headers["Cookie"] = ck
+    is_bili = source == "bilibili"
     opts = {
         "quiet": True, "no_warnings": True, "proxy": "",
-        "extract_flat": "in_playlist", "skip_download": True,
-        "playlist_items": f"1-{count}",
+        "skip_download": True,
         "socket_timeout": 15, "retries": 1,  # 网络挂时快速失败不卡死
+        "http_headers": headers or None,
     }
+    if not is_bili:
+        # YouTube：extract_flat 快搜（条目信息足够）
+        opts["extract_flat"] = "in_playlist"
+        opts["playlist_items"] = f"1-{count}"
+    query = (f"bilisearch:{keyword}" if is_bili
+             else f"ytsearch{count}:{keyword}")
     with yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(f"ytsearch{count}:{keyword}", download=False)
+        info = ydl.extract_info(query, download=False)
     entries = []
     for e in (info.get("entries") or []):
         if not e:
@@ -68,12 +117,20 @@ def search(keyword: str, count: int, dur_max: int = 0) -> list:
 
 
 def download(url: str, topic: str, start: str, end: str, desc: str,
-             root: str = DEFAULT_ROOT, max_height: int = 720) -> str:
+             root: str = DEFAULT_ROOT, max_height: int = 720,
+             source: str = "youtube") -> str:
     """下载单条视频入库（截取可选），返回入库文件路径。
 
     注：yt-dlp download_sections 在本机不生效 → 下载完整（限高控大小）
     → ffmpeg 本地截取 → 删原片；排除 AV1 编码保证播放器兼容。
+    B 站下载带 Referer（防盗链）。
     """
+    headers = {}
+    if source == "bilibili":
+        headers = {"Referer": "https://www.bilibili.com/"}
+        ck = _get_buvid_cookie()
+        if ck:
+            headers["Cookie"] = ck
     outdir = os.path.join(root, topic)
     os.makedirs(outdir, exist_ok=True)
     existing = [f for f in os.listdir(outdir)
@@ -88,6 +145,7 @@ def download(url: str, topic: str, start: str, end: str, desc: str,
                    f"+ba/b[height<={max_height}][vcodec!=av01]"),
         "merge_output_format": "mp4",
         "outtmpl": outtmpl,
+        "http_headers": headers or None,
     }
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=True)
@@ -128,9 +186,10 @@ def download(url: str, topic: str, start: str, end: str, desc: str,
 def fetch_by_keyword(keyword: str, topic: str, count: int = 3,
                      clip_seconds: int = 90, root: str = DEFAULT_ROOT,
                      max_height: int = 720, max_duration: int = 1200,
-                     progress=None) -> list:
+                     source: str = "youtube", progress=None) -> list:
     """按关键词自动抓 N 个片段入库（流水线集成用）。
 
+    - source: youtube / bilibili（B 站用完整 URL + Referer 下载）
     - 关键词按逗号/分号拆成多个搜索词，逐词搜索合并候选（AI 生成的关键词
       往往又长又碎，单次搜索命中差）
     - 优先选时长 ≤ max_duration 的视频（避免长片大下载）；无短片时降级取
@@ -151,7 +210,7 @@ def fetch_by_keyword(keyword: str, topic: str, count: int = 3,
     all_entries, seen = [], set()
     for t in terms:
         try:
-            for e in search(t, count=count * 4):  # 先不限时长收集候选
+            for e in search(t, count=count * 4, source=source):  # 先不限时长收集候选
                 if any(h in (e.get("title") or "") for h in _SONG_HINTS):
                     continue  # 跳过歌曲/歌词视频
                 if e.get("id") and e["id"] not in seen:
@@ -187,6 +246,10 @@ def fetch_by_keyword(keyword: str, topic: str, count: int = 3,
         desc = f"{keyword} 相关画面（横屏16:9，裁9:16注意构图）"
         progress(f"  ⬇ 下载片段 {i + 1}/{min(count, len(usable))}: "
                  f"{e['title'][:36]}… ({dur // 60}分)")
-        path = download(vid, topic, start, end, desc, root, max_height)
+        # B 站要完整 URL（裸 BV ID yt-dlp 不认）；YouTube 用 ID 即可
+        url = (f"https://www.bilibili.com/video/{vid}" if source == "bilibili"
+               else vid)
+        path = download(url, topic, start, end, desc, root, max_height,
+                        source=source)
         downloaded.append(path)
     return downloaded

@@ -159,8 +159,18 @@
           <div class="hint">选了题材只在该题材目录里轮播；留空=整个素材库轮播</div>
         </div>
       </div>
-      <!-- GL-20260827：抓视频素材（自动搜 YouTube → 下载入库 → 视频模式混剪） -->
+      <!-- GL-20260827：抓视频素材（自动搜 YouTube/B站 → 下载入库 → 视频模式混剪） -->
       <div id="fetchBox" style="display:none;margin-top:10px">
+        <div class="row">
+          <label>素材平台</label>
+          <div class="flex">
+            <select id="a_fetch_source" style="flex:1">
+              <option value="youtube">YouTube（国外纪录片多）</option>
+              <option value="bilibili">B站（中文纪录片多）</option>
+            </select>
+          </div>
+          <div class="hint">B站中文画面配中文稿子更贴；YouTube 英文纪录片画面通用</div>
+        </div>
         <div class="row">
           <label>搜索关键词</label>
           <div class="flex">
@@ -823,10 +833,11 @@ async function start(){
     const topic = $('a_video_topic') ? $('a_video_topic').value : '';
     params.video_dir = topic ? root + '/' + topic : root; // 题材留空=整个素材库轮播
   } else if(src === 'fetch'){
-    // GL-20260827：抓视频素材（自动搜 YouTube → 入库 → 视频模式混剪）
+    // GL-20260827：抓视频素材（自动搜 YouTube/B站 → 入库 → 视频模式混剪）
     const kw = ($('a_fetch_kw').value || '').trim();
     if(!kw){ alert('请填搜索关键词（可点「从稿子生成」）'); return; }
     params.fetch_keyword = kw;
+    params.fetch_source = $('a_fetch_source').value || 'youtube';
     params.fetch_topic = ($('a_fetch_topic').value || '').trim();
     params.fetch_count = parseInt($('a_fetch_count').value) || 3;
   }

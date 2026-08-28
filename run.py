@@ -844,6 +844,9 @@ def main():
     parser.add_argument("--video-dir", help="视频模式素材目录（指定则走视频混剪，不生成图片）")
     parser.add_argument("--fetch-keyword", default=None,
                         help="GL-20260827：抓视频素材关键词（自动搜YouTube→下载入库→走视频模式）")
+    parser.add_argument("--fetch-source", default="youtube",
+                        choices=["youtube", "bilibili"],
+                        help="抓素材平台：youtube / bilibili（默认youtube）")
     parser.add_argument("--fetch-topic", default=None, help="抓取素材题材目录（默认=关键词首词）")
     parser.add_argument("--fetch-count", type=int, default=3, help="抓取片段数（默认3）")
     parser.add_argument("--fetch-clip-seconds", type=int, default=90,
@@ -892,8 +895,10 @@ def main():
         clip_sec = getattr(args, "fetch_clip_seconds", None) or 90
         lib_root = os.path.expanduser(
             cfg.get("video_source", {}).get("root", "~/Desktop/历史说素材/视频/"))
-        print(f"  ▶ 抓取素材：「{fetch_kw}」{count} 个片段 → {lib_root}/{topic}")
+        print(f"  ▶ 抓取素材：「{fetch_kw}」{count} 个片段 [{getattr(args, 'fetch_source', 'youtube')}]"
+              f" → {lib_root}/{topic}")
         fetch_by_keyword(fetch_kw, topic, count, clip_sec, root=lib_root,
+                         source=getattr(args, "fetch_source", "youtube"),
                          progress=lambda m: print(f"    {m}"))
         cfg.setdefault("video", {})["mode"] = "clip"
         cfg.setdefault("video_source", {})["root"] = os.path.join(lib_root, topic)

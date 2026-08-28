@@ -370,6 +370,8 @@ def run_pipeline(params):
         # GL-20260827：抓视频素材（先抓后走视频模式）
         if params.get("fetch_keyword"):
             cmd += ["--fetch-keyword", params["fetch_keyword"]]
+            if params.get("fetch_source"):
+                cmd += ["--fetch-source", params["fetch_source"]]
             if params.get("fetch_topic"):
                 cmd += ["--fetch-topic", params["fetch_topic"]]
             cmd += ["--fetch-count", str(int(params.get("fetch_count") or 3))]
