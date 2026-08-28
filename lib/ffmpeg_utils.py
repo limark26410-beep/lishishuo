@@ -158,11 +158,9 @@ def build_video_clip(
     duration_sec = max(float(duration), 1.0)
     vf_pre = ""
     if crop_keep and 0 < crop_keep < 1:
-        size = probe_video_size(video_path)
-        if size and size[0] > size[1]:
-            # 横屏：先裁上下（保留中间 crop_keep），再放大填满竖屏
-            yoff = (1 - crop_keep) / 2
-            vf_pre = f"crop=iw:ih*{crop_keep}:0:ih*{yoff:.3f},"
+        # GL-20260828：垂直双端裁剪去原字幕（横竖屏素材都适用——竖屏视频上下也有字幕）
+        yoff = (1 - crop_keep) / 2
+        vf_pre = f"crop=iw:ih*{crop_keep}:0:ih*{yoff:.3f},"
     vf = (
         vf_pre
         + f"scale={width}:{height}:force_original_aspect_ratio=increase,"
