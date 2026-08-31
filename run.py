@@ -1236,11 +1236,18 @@ def main():
         print(f"\n{'='*60}")
         print(f"STEP 4: 归档到素材库 [{ep_name}]")
         print(f"{'='*60}")
+        # GL-20260831 fix: dual 循环后 final_path 是最后一个画布(横屏)，
+        # 主归档应使用竖屏版（final.mp4），横屏版单独带 _横屏 后缀
+        main_video = final_path
+        if raw_cv == "dual":
+            _pv = os.path.join(episode_dir, "final.mp4")
+            if os.path.exists(_pv):
+                main_video = _pv
         try:
             res = archive_episode(
                 episode_name=ep_name,
                 cfg=cfg,
-                final_video=final_path,
+                final_video=main_video,
                 audio=os.path.join(episode_dir, "audio.mp3"),
                 srt=os.path.join(episode_dir, "subs_processed.srt"),
                 script=os.path.join(episode_dir, "script.txt"),
