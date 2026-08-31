@@ -13,6 +13,8 @@ import re
 import subprocess
 import time
 
+import requests
+
 import yt_dlp
 
 DEFAULT_ROOT = os.path.expanduser("~/Desktop/历史说素材/视频/")
@@ -93,6 +95,61 @@ def _to_h264(path: str) -> None:
     os.replace(tmp, path)
 
 
+def _pexels_api_key() -> str:
+    """Pexels API key（pexels.com/api 免费申请）"""
+    return os.environ.get("PEXELS_API_KEY", "") or _read_env_key("PEXELS_API_KEY")
+
+
+def _read_env_key(name: str) -> str:
+    """读 .env 里的 key"""
+    env = os.path.expanduser("~/.env")
+    for cand in ("~/.env", "~/Desktop/历史说素材/.env", "/Users/local/lishishuo/.env"):
+        p = os.path.expanduser(cand)
+        if os.path.exists(p):
+            for ln in open(p, encoding="utf-8"):
+                if ln.strip().startswith(name):
+                    return ln.split("=", 1)[-1].strip()
+    return ""
+
+
+def _pexels_search(keyword: str, count: int, dur_max: int) -> list:
+    """Pexels 视频搜索（无版权素材库，需 PEXELS_API_KEY）"""
+    key = _pexels_api_key()
+    if not key:
+        raise RuntimeError("未配置 PEXELS_API_KEY（https://www.pexels.com/api/ 免费申请）")
+    r = requests.get(
+        "https://api.pexels.com/videos/search",
+        params={"query": keyword, "per_page": max(count, 5),
+                "orientation": "landscape"},
+        headers={"Authorization": key}, timeout=20)
+    r.raise_for_status()
+    entries = []
+    for v in (r.json().get("videos") or []):
+        dur = v.get("duration") or 0
+        if dur_max and dur > dur_max:
+            continue
+        url = ""
+        for f in (v.get("video_files") or []):
+            if f.get("link") and (f.get("height") or 9999) <= 720:
+                url = f["link"]
+                break
+        if not url:
+            continue
+        entries.append({"title": (v.get("url") or "Pexels素材"),
+                        "duration": dur, "channel": "Pexels", "id": url})
+    return entries
+
+
+def _pexels_download(url: str, out_path: str) -> None:
+    """直接下载 Pexels 直链 mp4"""
+    r = requests.get(url, stream=True, timeout=120)
+    r.raise_for_status()
+    with open(out_path, "wb") as f:
+        for chunk in r.iter_content(1024 * 256):
+            if chunk:
+                f.write(chunk)
+
+
 def search(keyword: str, count: int, dur_max: int = 0,
            source: str = "youtube") -> list:
     """搜索候选。source: youtube / bilibili。
@@ -100,6 +157,8 @@ def search(keyword: str, count: int, dur_max: int = 0,
     返回 [{title, duration, channel, id}]。B 站用 bilisearch 完整提取
     （extract_flat 下 B 站条目信息不全）+ Referer/buvid cookie 防 412。
     """
+    if source == "pexels":
+        return _pexels_search(keyword, count, dur_max)
     headers = {}
     if source == "bilibili":
         headers = _bili_headers()
@@ -162,8 +221,14 @@ def download(url: str, topic: str, start: str, end: str, desc: str,
         "outtmpl": outtmpl,
         "http_headers": headers or None,
     }
-    # B 站 412 偶发反爬 → 自动重试（强制刷新 cookie）
-    last_err = None
+    # Pexels：直链下载（不经 yt-dlp）
+    if source == "pexels":
+        _pexels_download(url, os.path.join(outdir, f"{prefix}.mp4"))
+        full_path = os.path.join(outdir, f"{prefix}.mp4")
+        info = {"title": url}
+    else:
+        # B 站 412 偶发反爬 → 自动重试（强制刷新 cookie）
+        last_err = None
     for attempt in range(1, 4):
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
@@ -181,11 +246,14 @@ def download(url: str, topic: str, start: str, end: str, desc: str,
     else:
         raise RuntimeError(f"B站下载失败（多次重试仍 412）: {last_err}")
 
-    files = [f for f in os.listdir(outdir)
-             if f.startswith(prefix) and f.lower().endswith((".mp4", ".mkv", ".webm"))]
-    if not files:
-        raise RuntimeError("下载后未找到文件")
-    full_path = os.path.join(outdir, files[0])
+    if source == "pexels":
+        files = [os.path.basename(full_path)]
+    else:
+        files = [f for f in os.listdir(outdir)
+                 if f.startswith(prefix) and f.lower().endswith((".mp4", ".mkv", ".webm"))]
+        if not files:
+            raise RuntimeError("下载后未找到文件")
+        full_path = os.path.join(outdir, files[0])
 
     # 兜底：AV1 → H.264
     if _is_av1(full_path):

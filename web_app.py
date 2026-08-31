@@ -369,8 +369,14 @@ def run_pipeline(params):
             cmd += ["--style", params["style"]]  # GL-20260817-03：风格预设（story/short）
         if params.get("canvas"):
             cmd += ["--canvas", params["canvas"]]  # GL-20260828：成片画幅（portrait/landscape/dual）
+        if params.get("also_nosub"):
+            cmd += ["--also-nosub"]  # GL-20260828：同时出无字幕版
         # GL-20260827：抓视频素材（先抓后走视频模式）
-        if params.get("fetch_keyword"):
+        if params.get("fetch_url"):
+            cmd += ["--fetch-url", params["fetch_url"]]
+            if params.get("fetch_topic"):
+                cmd += ["--fetch-topic", params["fetch_topic"]]
+        elif params.get("fetch_keyword"):
             cmd += ["--fetch-keyword", params["fetch_keyword"]]
             if params.get("fetch_source"):
                 cmd += ["--fetch-source", params["fetch_source"]]

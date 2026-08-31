@@ -289,7 +289,7 @@ def step_image_gen(episode_dir: str, cfg: dict) -> dict:
     return result
 
 
-def step_mix(episode_dir: str, tts_result: dict, img_result: dict, cfg: dict, canvas=None) -> str:
+def step_mix(episode_dir: str, tts_result: dict, img_result: dict, cfg: dict, canvas=None, also_nosub=False) -> str:
     """Step 3-7: 混剪合成"""
     print(f"\n{'='*60}")
     print("STEP 3: 混剪合成")
@@ -316,7 +316,7 @@ def step_mix(episode_dir: str, tts_result: dict, img_result: dict, cfg: dict, ca
     # ── 视频模式分支（GL-20260814-02）：素材轮播截取 → concat → 复用后处理 ──
     # 图片模式代码一行不改，只在入口分流
     if video_cfg.get("mode") == "clip":
-        return _video_step_mix(episode_dir, tts_result, cfg, canvas=canvas)
+        return _video_step_mix(episode_dir, tts_result, cfg, canvas=canvas, also_nosub=also_nosub)
 
     # ── 3a. 解析图片结果 ──
     image_map = img_result.get("image_map", {})
@@ -435,6 +435,23 @@ def step_mix(episode_dir: str, tts_result: dict, img_result: dict, cfg: dict, ca
         audio_bitrate=enc_cfg.get("audio_bitrate", "192k"),
     )
 
+    # GL-20260828：图片分支无字幕版（混音后导出）
+    if also_nosub:
+        tc_cfg = cfg.get("title_card", {})
+        tc_dur = int(tc_cfg.get("duration", 3))
+        nosub_out = _cv_path(episode_dir, "final_nosub.mp4", canvas)
+        title_png0 = _cv_path(episode_dir, "title_card.png", canvas)
+        if os.path.exists(title_png0):
+            overlay_title_card(
+                video_path=audio_mixed, title_card_png=title_png0,
+                output_path=nosub_out, duration=tc_dur,
+                encode_args=_encode_args(cfg, final=True))
+        else:
+            subprocess.run(["ffmpeg", "-y", "-loglevel", "error",
+                            "-i", audio_mixed, "-c", "copy", nosub_out],
+                           check=True, capture_output=True, text=True)
+        print(f"  ✓ 无字幕版: {os.path.basename(nosub_out)}")
+
     # ── 3f. 字幕后处理 + 自动检查 ──
     print(f"\n  字幕折行处理...")
     subtitle_burn.configure(cfg)
@@ -485,7 +502,7 @@ def step_mix(episode_dir: str, tts_result: dict, img_result: dict, cfg: dict, ca
     return final_output
 
 
-def _video_step_mix(episode_dir: str, tts_result: dict, cfg: dict, canvas=None) -> str:
+def _video_step_mix(episode_dir: str, tts_result: dict, cfg: dict, canvas=None, also_nosub=False) -> str:
     """视频模式混剪（GL-20260814-03：AI 智能选材版）。
 
     段落即选材单位：稿子分段 → 段落音频时长（subs.srt 聚合）→
@@ -647,7 +664,7 @@ def _video_step_mix(episode_dir: str, tts_result: dict, cfg: dict, canvas=None) 
     except Exception as e:  # noqa: BLE001 标注失败不阻断，退回单 BGM
         print(f"  ⚠ 分段配乐准备失败（{type(e).__name__}: {e}），退回单 BGM")
         seg_audio = None
-    return _post_mix(episode_dir, merged_video, tts_result, cfg, seg_audio=seg_audio, canvas=canvas)
+    return _post_mix(episode_dir, merged_video, tts_result, cfg, seg_audio=seg_audio, canvas=canvas, also_nosub=also_nosub)
 
 
 def _resolve_video_plan(episode_dir: str, segments: list, materials: list) -> list:
@@ -728,7 +745,8 @@ def _material_by_path(materials: list, path: str):
 
 
 def _post_mix(episode_dir: str, merged_video: str, tts_result: dict, cfg: dict,
-              seg_audio: list = None, canvas: str = None) -> str:
+              seg_audio: list = None, canvas: str = None,
+              also_nosub: bool = False) -> str:
     """后处理（视频模式专用，与图片分支 3e-3h 同款逻辑）：
     混音 → 字幕折行检查 → 烧字幕 → 片头叠加 → 编码。
     图片分支代码保持不动，此函数只服务视频模式。
@@ -760,6 +778,23 @@ def _post_mix(episode_dir: str, merged_video: str, tts_result: dict, cfg: dict,
         seg_audio=seg_audio,
         bgm_map=bgm_map,
     )
+
+    # GL-20260828：无字幕版（烧字幕前导出：混音视频 + 片头 + 编码）
+    if also_nosub:
+        tc_cfg = cfg.get("title_card", {})
+        tc_dur = int(tc_cfg.get("duration", 3))
+        nosub_out = _cv_path(episode_dir, "final_nosub.mp4", canvas)
+        title_png0 = _cv_path(episode_dir, "title_card.png", canvas)
+        if os.path.exists(title_png0):
+            overlay_title_card(
+                video_path=audio_mixed, title_card_png=title_png0,
+                output_path=nosub_out, duration=tc_dur,
+                encode_args=_encode_args(cfg, final=True))
+        else:
+            subprocess.run(["ffmpeg", "-y", "-loglevel", "error",
+                            "-i", audio_mixed, "-c", "copy", nosub_out],
+                           check=True, capture_output=True, text=True)
+        print(f"  ✓ 无字幕版: {os.path.basename(nosub_out)}")
 
     # ── 字幕后处理 + 自动检查 ──
     print(f"\n  字幕折行处理...")
@@ -889,8 +924,10 @@ def main():
     parser.add_argument("--fetch-keyword", default=None,
                         help="GL-20260827：抓视频素材关键词（自动搜YouTube→下载入库→走视频模式）")
     parser.add_argument("--fetch-source", default="youtube",
-                        choices=["youtube", "bilibili"],
-                        help="抓素材平台：youtube / bilibili（默认youtube）")
+                        choices=["youtube", "bilibili", "pexels"],
+                        help="抓素材平台：youtube / bilibili / pexels（默认youtube）")
+    parser.add_argument("--fetch-url", default=None,
+                        help="GL-20260828：直接按视频链接下载入库（抖音/其他，绕过搜索）")
     parser.add_argument("--fetch-topic", default=None, help="抓取素材题材目录（默认=关键词首词）")
     parser.add_argument("--fetch-count", type=int, default=3, help="抓取片段数（默认3）")
     parser.add_argument("--fetch-clip-seconds", type=int, default=90,
@@ -900,6 +937,8 @@ def main():
                         help="风格预设（config.yaml style.presets 的键，如 story/short；缺省用 style.default）")
     parser.add_argument("--rate", default=None,
                         help="手动语速（GL-20260818 D3：显式指定则优先于风格预设，如 --rate +5%%）")
+    parser.add_argument("--also-nosub", action="store_true",
+                        help="GL-20260828：每个画幅同时出无字幕版（final_nosub.mp4）")
     parser.add_argument("--canvas", default=None,
                         help="成片画幅（config canvas.presets 的键：portrait/landscape；缺省用 canvas.default）")
     parser.add_argument("--only", choices=["subtitle", "title", "encode"],
@@ -955,6 +994,20 @@ def main():
         cfg.setdefault("video_source", {})["root"] = os.path.join(lib_root, topic)
         video_mode = True
         print(f"  ▶ 视频模式：素材库 {cfg['video_source']['root']}（刚抓取）")
+
+    # GL-20260828：直接按链接下载单条素材（抖音等，绕过搜索）
+    fetch_url = getattr(args, "fetch_url", None)
+    if fetch_url:
+        from lib.fetch_materials import download
+        topic = getattr(args, "fetch_topic", None) or "素材"
+        lib_root = os.path.expanduser(
+            cfg.get("video_source", {}).get("root", "~/Desktop/历史说素材/视频/"))
+        print(f"  ▶ 链接下载: {fetch_url[:60]}… → {lib_root}/{topic}")
+        download(fetch_url, topic, None, None, f"链接素材 {fetch_url[:40]}", lib_root)
+        cfg.setdefault("video", {})["mode"] = "clip"
+        cfg.setdefault("video_source", {})["root"] = os.path.join(lib_root, topic)
+        video_mode = True
+        print(f"  ▶ 视频模式：素材库 {cfg['video_source']['root']}（链接下载）")
 
     if not os.path.exists(os.path.join(episode_dir, "script.txt")):
         print(f"❌ {episode_dir}/script.txt 不存在")
@@ -1120,7 +1173,8 @@ def main():
             cfg_cv = _copy.deepcopy(cfg)
             apply_canvas(cfg_cv, cv)
             final_path = step_mix(episode_dir, tts_result, img_result,
-                                  cfg_cv, canvas=cv)
+                                  cfg_cv, canvas=cv,
+                                  also_nosub=getattr(args, "also_nosub", False))
             print(f"  ✓ [{cv}] 成片: {final_path}")
     else:
         print("❌ TTS 或生图结果缺失")
@@ -1146,6 +1200,18 @@ def main():
             for k, v in res.items():
                 if v:
                     print(f"  ✓ {k}: {v}")
+            # GL-20260828：dual 时横屏成片也归档（文件名带 _横屏 后缀）
+            if raw_cv == "dual" and final_path != final_path.replace("_landscape", ""):
+                ls_path = os.path.join(episode_dir, "final_landscape.mp4")
+                if os.path.exists(ls_path):
+                    res2 = archive_episode(
+                        episode_name=f"{ep_name}_横屏",
+                        cfg=cfg, final_video=ls_path,
+                        srt=os.path.join(episode_dir, "subs_processed_landscape.srt"),
+                        script=os.path.join(episode_dir, "script.txt"),
+                    )
+                    if res2.get("video"):
+                        print(f"  ✓ 横屏归档: {res2['video']}")
         except Exception as e:
             print(f"  ⚠ 归档失败: {e}")
 

@@ -138,6 +138,9 @@
         <option value="dual">双画幅（一次出竖屏+横屏）</option>
       </select>
       <div class="hint">GL-20260828：竖屏保留现状；横屏素材做横屏成片利用率100%；双画幅一次跑出两个</div>
+      <label style="display:block;margin-top:8px">
+        <input type="checkbox" id="a_nosub"> 同时出无字幕版（适合平台自动识别字幕/后期自加）
+      </label>
     </div>
 
     <div class="row">
@@ -187,6 +190,7 @@
             <select id="a_fetch_source" style="flex:1">
               <option value="youtube">YouTube（国外纪录片多）</option>
               <option value="bilibili">B站（中文纪录片多）</option>
+              <option value="pexels">Pexels（无版权素材库）</option>
             </select>
           </div>
           <div class="hint">B站中文画面配中文稿子更贴；YouTube 英文纪录片画面通用</div>
@@ -212,6 +216,13 @@
             <input type="number" id="a_fetch_count" value="3" min="1" max="8" style="width:100px">
           </div>
           <div class="hint">抓几个片段（每个约 1-2 分钟；下载耗时约 1-2 分钟/个）</div>
+        </div>
+        <div class="row">
+          <label>或：粘贴视频链接</label>
+          <div class="flex">
+            <input type="text" id="a_fetch_url" placeholder="抖音等视频链接，填了则直接下载该条（不走搜索）">
+          </div>
+          <div class="hint">支持抖音/B站/YouTube 等 yt-dlp 可识别的链接；适合"看到好的直接存"</div>
         </div>
       </div>
     </div>
@@ -860,6 +871,7 @@ async function start(){
     title_bg: $('titlebg').value.trim(),
     style: $('a_style').value,   // GL-20260817-03：风格预设（story/short）
     canvas: $('a_canvas').value, // GL-20260828：成片画幅（portrait/landscape/dual）
+    also_nosub: !!$('a_nosub').checked, // GL-20260828：同时出无字幕版
   };
   // GL-20260817-01：图片来源三选一显式分支（消除隐式触发）
   const src = document.querySelector('input[name=imgsrc]:checked').value;
@@ -872,13 +884,19 @@ async function start(){
     const topic = $('a_video_topic') ? $('a_video_topic').value : '';
     params.video_dir = topic ? root + '/' + topic : root; // 题材留空=整个素材库轮播
   } else if(src === 'fetch'){
-    // GL-20260827：抓视频素材（自动搜 YouTube/B站 → 入库 → 视频模式混剪）
-    const kw = ($('a_fetch_kw').value || '').trim();
-    if(!kw){ alert('请填搜索关键词（可点「从稿子生成」）'); return; }
-    params.fetch_keyword = kw;
-    params.fetch_source = $('a_fetch_source').value || 'youtube';
-    params.fetch_topic = ($('a_fetch_topic').value || '').trim();
-    params.fetch_count = parseInt($('a_fetch_count').value) || 3;
+    // GL-20260827：抓视频素材（自动搜 YouTube/B站/Pexels → 入库 → 视频模式混剪）
+    const url = ($('a_fetch_url').value || '').trim();
+    if(url){
+      params.fetch_url = url;  // GL-20260828：链接优先，直接下载该条
+      params.fetch_topic = ($('a_fetch_topic').value || '').trim();
+    } else {
+      const kw = ($('a_fetch_kw').value || '').trim();
+      if(!kw){ alert('请填搜索关键词（可点「从稿子生成」），或粘贴视频链接'); return; }
+      params.fetch_keyword = kw;
+      params.fetch_source = $('a_fetch_source').value || 'youtube';
+      params.fetch_topic = ($('a_fetch_topic').value || '').trim();
+      params.fetch_count = parseInt($('a_fetch_count').value) || 3;
+    }
   }
   if(!params.episode || !params.script_path){
     alert('请填期号和稿子路径'); return;
