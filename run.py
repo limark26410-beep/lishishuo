@@ -33,7 +33,12 @@ from datetime import timedelta
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "lib"))
 
 import yaml
-from tts_utils import generate_tts, generate_tts_segmented, vtt_to_srt
+from tts_utils import (
+    generate_tts,
+    generate_tts_segmented,
+    generate_tts_doubao,
+    vtt_to_srt,
+)
 import subtitle_burn
 import gen_title
 from pipeline_steps import (
@@ -198,7 +203,7 @@ def _time_str(sec: float) -> str:
 # ─────────── 步骤函数 ───────────
 
 def step_tts(episode_dir: str, cfg: dict) -> dict:
-    """Step 1: 配音生成"""
+    """Step 1: 配音生成（GL-20260831：支持豆包语音引擎，失败自动回退 edge-tts）"""
     print(f"\n{'='*60}")
     print("STEP 1: 配音 (TTS)")
     print(f"{'='*60}")
@@ -208,10 +213,11 @@ def step_tts(episode_dir: str, cfg: dict) -> dict:
     subs_vtt = os.path.join(episode_dir, "subs.vtt")
     subs_srt = os.path.join(episode_dir, "subs.srt")
     tts_cfg = cfg.get("tts", {})
+    engine = tts_cfg.get("engine", "edge")  # edge | doubao
 
     # GL-20260817-05 5b-3：段落级语速——配置 tts.emotion_rates 时按段落分次 TTS
     emotion_rates = tts_cfg.get("emotion_rates") or {}
-    if emotion_rates:
+    if emotion_rates and engine == "edge":
         from script_seg import split_segments
         from emotion_tag import tag_emotions
         with open(script_path, encoding="utf-8") as f:
@@ -233,6 +239,29 @@ def step_tts(episode_dir: str, cfg: dict) -> dict:
             result["subs_srt"] = subs_srt
             return result
         print("  ⚠ 段落/情绪切分失败，退回整篇 TTS")
+
+    if engine == "doubao":
+        voice = tts_cfg.get("doubao", {}).get("voice", "zh_female_vv_uranus_bigtts")
+        rate = tts_cfg.get("rate", "-4%")
+        try:
+            result = generate_tts_doubao(
+                script_path=script_path,
+                output_audio=audio_path,
+                output_subs=subs_vtt,
+                voice=voice,
+                rate=rate,
+            )
+            # 豆包 SRT 就是标准 SRT；vtt_to_srt 幂等重编号，走同一管线
+            vtt_to_srt(subs_vtt, subs_srt)
+            result["subs_srt"] = subs_srt
+            result["engine"] = "doubao"
+            return result
+        except Exception as e:
+            print(f"  ⚠ 豆包引擎失败（{type(e).__name__}: {str(e)[:150]}），自动回退 edge-tts")
+            # 清掉可能残留的半个文件，避免下游用旧音频
+            for p in (audio_path, subs_vtt, subs_srt):
+                if os.path.exists(p):
+                    os.remove(p)
 
     result = generate_tts(
         script_path=script_path,
@@ -942,6 +971,8 @@ def main():
                         help="风格预设（config.yaml style.presets 的键，如 story/short；缺省用 style.default）")
     parser.add_argument("--rate", default=None,
                         help="手动语速（GL-20260818 D3：显式指定则优先于风格预设，如 --rate +5%%）")
+    parser.add_argument("--engine", default=None, choices=["edge", "doubao"],
+                        help="GL-20260831：配音引擎（edge=微软 / doubao=豆包语音；缺省用 config tts.engine）")
     parser.add_argument("--also-nosub", action="store_true",
                         help="GL-20260828：每个画幅同时出无字幕版（final_nosub.mp4）")
     parser.add_argument("--canvas", default=None,
@@ -970,6 +1001,11 @@ def main():
         from tts_utils import normalize_rate
         cfg.setdefault("tts", {})["rate"] = normalize_rate(args.rate)
         print(f"  ▶ 手动语速优先: {cfg['tts']['rate']}（覆盖风格预设）")
+
+    # GL-20260831：显式 --engine 覆盖配置里的配音引擎
+    if getattr(args, "engine", None):
+        cfg.setdefault("tts", {})["engine"] = args.engine
+        print(f"  ▶ 配音引擎: {args.engine}")
 
     episode_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                "episodes", args.episode)

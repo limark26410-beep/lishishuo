@@ -306,6 +306,13 @@
         <div><label>字幕底边距(px)</label><input type="number" id="a_margin" value="400"></div>
         <div><label>字幕字号</label><input type="number" id="a_font" value="60"></div>
         <div><label>编码质量 CRF</label><input type="number" id="a_crf" value="26"></div>
+        <div><label>TTS 引擎</label>
+          <select id="a_engine" onchange="switchEngine()">
+            <option value="edge">微软 edge（免费 · 稳定）</option>
+            <option value="doubao">豆包语音（更自然 · 需 API Key）</option>
+          </select>
+          <div class="hint" style="display:block;margin-top:2px">豆包音质更自然、字幕逐字对齐；需先在控制台开通并填 DOUBAO_TTS_KEY（.env）；失败自动回退微软</div>
+        </div>
         <div><label>TTS 声线</label>
           <select id="a_voice"><option value="zh-CN-YunjianNeural">云健 · 男声 · 沉稳解说（当前）</option></select>
         </div>
@@ -419,7 +426,14 @@ async function loadCfg(){
     }
     if(c.title_card) $('a_dur').value = c.title_card.duration ?? 3;
     if(c.video?.encoder_options?.libx264) $('a_crf').value = c.video.encoder_options.libx264.crf ?? 26;
-    if(c.tts){ if(c.tts.voice && [...$('a_voice').options].some(o=>o.value===c.tts.voice)) $('a_voice').value=c.tts.voice; $('a_rate').value = c.tts.rate || ''; }
+    if(c.tts){
+      // GL-20260831：配音引擎回填（edge/doubao）
+      if(c.tts.engine && [...$('a_engine').options].some(o=>o.value===c.tts.engine)) $('a_engine').value = c.tts.engine;
+      const want = c.tts.engine === 'doubao' ? (c.tts.doubao?.voice || c.tts.voice) : c.tts.voice;
+      if(want && [...$('a_voice').options].some(o=>o.value===want)) $('a_voice').value = want;
+      $('a_rate').value = c.tts.rate || '';
+    }
+    await loadVoices(); // GL-20260831：引擎回填后刷新对应音色列表
     if(c.style?.default && [...$('a_style').options].some(o=>o.value===c.style.default)) $('a_style').value = c.style.default; // GL-20260817-03：风格默认值回填
     // GL-20260828：创作类型回填 + 按类型预填默认值
     window._contentTypes = c.content_types || {default:'故事', presets:{}};
@@ -490,7 +504,9 @@ function applyCtype(){
   if(p){
     if(p.style && [...$('a_style').options].some(o=>o.value===p.style)) $('a_style').value = p.style;
     if(p.rate) $('a_rate').value = p.rate;
-    if(p.voice && [...$('a_voice').options].some(o=>o.value===p.voice)) $('a_voice').value = p.voice;
+    // GL-20260831：声线联动按引擎取（豆包类型预设的 voice 是豆包音色ID）
+    const want = p.voice;
+    if(want && [...$('a_voice').options].some(o=>o.value===want)) $('a_voice').value = want;
   }
   const hints = {商品:'卖什么？如：中发电子市场的黄酒', 故事:'讲什么故事？如：李白的一生', 营销:'推广什么？如：中发电子市场招商'};
   if($('aiInstruction')) $('aiInstruction').placeholder = hints[t] || '';
@@ -566,7 +582,8 @@ async function checkImages(){
 
 async function loadVoices(){
   try{
-    const r = await (await fetch('/api/voices')).json();
+    const eng = $('a_engine').value;
+    const r = await (await fetch('/api/voices?engine=' + eng)).json();
     const sel = $('a_voice');
     const cur = sel.value;
     sel.innerHTML = '';
@@ -577,6 +594,11 @@ async function loadVoices(){
     });
     if([...sel.options].some(o=>o.value===cur)) sel.value = cur;
   }catch(e){}
+}
+
+// GL-20260831：切换配音引擎 → 音色列表随之切换
+function switchEngine(){
+  loadVoices();
 }
 
 async function loadKeyStatus(){
@@ -639,10 +661,13 @@ async function loadVideoTopics(){
 
 async function saveAdv(){
   const manualRate = !!(($('a_rate').dataset || {}).touched === '1'); // GL-20260818 D3
+  const eng = $('a_engine').value;
   const r = await post('/api/save-config', {advanced:{
     title_duration: +$('a_dur').value, margin_bottom: +$('a_margin').value,
     font_size: +$('a_font').value, crf: +$('a_crf').value,
+    tts_engine: eng,
     voice: $('a_voice').value, rate: $('a_rate').value,
+    doubao_voice: eng === 'doubao' ? $('a_voice').value : undefined,
     rate_manual: manualRate ? true : undefined,  // 只改过才置 true；没改过不传（保持 config 现值）
     library_root: $('a_root').value,
     video_source_root: $('a_video_root').value,

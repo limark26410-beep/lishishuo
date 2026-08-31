@@ -9,6 +9,7 @@ TTS 配音工具模块
 """
 
 import asyncio
+import json
 import os
 import re
 import subprocess
@@ -345,6 +346,242 @@ def generate_tts_segmented(
         "subs_path": output_subs,
         "duration_sec": offset,
     }
+
+
+# ─────────── 豆包语音引擎（GL-20260831：第二个配音引擎） ───────────
+#
+# 豆包语音合成大模型 2.0（火山引擎「豆包语音」产品，非方舟 API）
+# - 接口: POST https://openspeech.bytedance.com/api/v3/tts/unidirectional
+# - 鉴权: X-Api-Key: <豆包语音 API Key>（控制台 https://console.volcengine.com/speech/new/setting/apikeys）
+#          X-Api-Resource-Id: seed-tts-2.0
+# - 特性: 支持 enable_subtitle 返回逐字时间戳（可直接生成 SRT）、speech_rate 语速(-50~100)、emotion 情感
+# - Key 存 .env: DOUBAO_TTS_KEY；未配置/失败时由上层回退 edge-tts
+
+_DOUBAO_TTS_URL = "https://openspeech.bytedance.com/api/v3/tts/unidirectional"
+_DOUBAO_RESOURCE_ID = "seed-tts-2.0"
+_DOUBAO_SAMPLE_RATE = 24000
+# 单次请求文本上限（超过则按句子分批，避免 40402003 超限）
+_DOUBAO_MAX_CHARS = 500
+
+
+def _doubao_api_key() -> str:
+    key = os.environ.get("DOUBAO_TTS_KEY", "").strip()
+    if not key:
+        raise RuntimeError("未配置 DOUBAO_TTS_KEY（豆包语音 API Key），请在 .env 填写")
+    return key
+
+
+def _edge_rate_to_doubao(rate: str) -> int:
+    """edge 语速（如 +28% / -4%）→ 豆包 speech_rate（-50~100，100=2倍速）。
+    超出豆包上限时截断（+120% → 100）。"""
+    r = normalize_rate(rate)  # 复用规范化（+28% / -4%）
+    n = int(r[:-1])           # 去掉尾 %
+    return max(-50, min(100, n))
+
+
+def _doubao_synth_once(text: str, voice: str, speech_rate: int,
+                       session: "requests.Session" = None,
+                       max_retries: int = 3) -> tuple:
+    """单次调用豆包语音合成（带重试）。
+    返回 (audio_bytes, sentences)；sentences = [{text, words:[{word,startTime,endTime}]}]
+    失败抛 RuntimeError（由上层回退 edge-tts）。"""
+    import base64
+    import requests  # 延迟导入：仅豆包引擎使用
+
+    key = _doubao_api_key()
+    payload = {
+        "user": {"uid": "lishishuo"},
+        "req_params": {
+            "text": text,
+            "speaker": voice,
+            "audio_params": {
+                "format": "mp3",
+                "sample_rate": _DOUBAO_SAMPLE_RATE,
+                "enable_subtitle": True,
+                "speech_rate": speech_rate,
+            },
+        },
+    }
+    headers = {
+        "X-Api-Key": key,
+        "X-Api-Resource-Id": _DOUBAO_RESOURCE_ID,
+        "X-Api-Connect-Id": f"ls-{os.getpid()}-{int(__import__('time').time()*1000)}",
+        "Content-Type": "application/json",
+    }
+    last_err = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            resp = (session or requests).post(
+                _DOUBAO_TTS_URL, headers=headers, json=payload, timeout=120)
+            if resp.status_code != 200:
+                raise RuntimeError(f"豆包 HTTP {resp.status_code}: {resp.text[:200]}")
+            audio = bytearray()
+            sentences = []
+            for line in resp.text.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except Exception:
+                    continue
+                code = obj.get("code")
+                if code == 0 and obj.get("data"):
+                    audio.extend(base64.b64decode(obj["data"]))
+                elif obj.get("sentence"):
+                    sentences.append(obj["sentence"])
+                elif code == 20000000:
+                    break  # 会话结束
+                elif code not in (0,):
+                    raise RuntimeError(f"豆包业务错误 {code}: {obj.get('message','')[:200]}")
+            if not audio:
+                raise RuntimeError("豆包返回空音频")
+            return bytes(audio), sentences
+        except Exception as e:  # 网络/超时/业务错误统一重试
+            last_err = e
+            if attempt < max_retries:
+                wait = attempt * 6
+                print(f"  ⚠ 豆包调用失败（第{attempt}次）：{str(e)[:100]}，{wait}秒后重试…")
+                __import__("time").sleep(wait)
+    raise RuntimeError(f"豆包语音合成失败: {last_err}")
+
+
+def _split_long_text(text: str, max_chars: int = _DOUBAO_MAX_CHARS) -> list:
+    """按句子切分长文本，每段 ≤ max_chars（按。！？；\n 切，兜底按长度硬切）。"""
+    import re as _re
+    if len(text) <= max_chars:
+        return [text]
+    parts = []
+    cur = ""
+    # 先按行切（稿子本身按句分行）
+    for line in _re.split(r"\n+", text):
+        line = line.strip()
+        if not line:
+            continue
+        # 行内再按句末标点切
+        segs = _re.findall(r"[^。！？；]*[。！？；]?|[^。！？；]+$", line)
+        for s in segs:
+            s = s.strip()
+            if not s:
+                continue
+            if len(cur) + len(s) > max_chars and cur:
+                parts.append(cur)
+                cur = s
+            else:
+                cur += s
+    if cur:
+        parts.append(cur)
+    return parts or [text]
+
+
+def _sentences_to_srt(sentences: list) -> str:
+    """豆包逐字时间戳 → SRT 内容。
+    优先用 sentence.words 首末字时间；无 words 的句子用前后时间戳句子估算。"""
+    def _ts(sec: float) -> str:
+        sec = max(0.0, sec)
+        h = int(sec // 3600); m = int((sec % 3600) // 60)
+        s = int(sec % 60); ms = int(round((sec - int(sec)) * 1000))
+        if ms == 1000:
+            s += 1; ms = 0
+        return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+    # 预扫描每个有 words 句子的起止，建立索引
+    n = len(sentences)
+    timed_idx = [i for i, s in enumerate(sentences) if s.get("words")]
+
+    blocks = []
+    idx = 1
+    last_end = 0.0
+    next_timed_ptr = 0
+    for i, s in enumerate(sentences):
+        text = (s.get("text") or "").strip()
+        if not text:
+            continue
+        words = s.get("words") or []
+        if not words:
+            # 无逐字时间戳的句子（聚合句/重复句）跳过——字幕以有 words 的句子为准
+            continue
+        start = words[0]["startTime"]
+        end = words[-1]["endTime"]
+        last_end = end
+        if next_timed_ptr < len(timed_idx) and timed_idx[next_timed_ptr] == i:
+            next_timed_ptr += 1
+        blocks.append(f"{idx}\n{_ts(start)} --> {_ts(end)}\n{text}\n")
+        idx += 1
+    return "\n".join(blocks)
+
+
+def generate_tts_doubao(
+    script_path: str,
+    output_audio: str,
+    output_subs: str,
+    voice: str = "zh_female_vv_uranus_bigtts",
+    rate: str = "-4%",
+) -> dict:
+    """豆包语音引擎整篇合成：长文按句分批 → 音频 concat → 逐字时间戳 SRT。
+    返回与 generate_tts 同结构 {audio_path, subs_path, duration_sec}。"""
+    script_path = str(script_path); output_audio = str(output_audio); output_subs = str(output_subs)
+    ensure_dir(output_audio)
+    with open(script_path, encoding="utf-8") as f:
+        text = f.read().strip()
+    if not text:
+        raise RuntimeError("稿子为空")
+    speech_rate = _edge_rate_to_doubao(rate)
+    print(f"  Running: doubao-tts --speaker {voice} --speech_rate {speech_rate}")
+
+    import tempfile, shutil, time as _t
+    tmpdir = tempfile.mkdtemp(prefix="doubao_")
+    try:
+        seg_audios = []
+        offset = 0.0
+        all_sentences = []
+        parts = _split_long_text(text)
+        for i, part in enumerate(parts):
+            audio, sentences = _doubao_synth_once(part, voice, speech_rate)
+            seg_path = os.path.join(tmpdir, f"seg_{i:03d}.mp3")
+            with open(seg_path, "wb") as f:
+                f.write(audio)
+            dur = _audio_duration_sec(seg_path)
+            seg_audios.append(seg_path)
+            # 本段句子时间戳是相对本段起点的 → 平移到全局
+            for s in sentences:
+                s2 = dict(s)
+                words = []
+                for w in s.get("words", []):
+                    w2 = dict(w)
+                    w2["startTime"] = round(w2["startTime"] + offset, 3)
+                    w2["endTime"] = round(w2["endTime"] + offset, 3)
+                    words.append(w2)
+                s2["words"] = words
+                all_sentences.append(s2)
+            print(f"  [段{i+1}/{len(parts)}] {dur:.1f}s（{len(sentences)} 句字幕）")
+            offset += dur
+            _t.sleep(0.3)  # 避免并发限流
+        if not seg_audios:
+            raise RuntimeError("豆包：所有段落均为空")
+        _concat_audios(seg_audios, output_audio)
+        srt = _sentences_to_srt(all_sentences)
+        with open(output_subs, "w", encoding="utf-8") as f:
+            f.write(srt)
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    print(f"  TTS done（豆包 {len(seg_audios)} 段）: {Path(output_audio).name} -> {offset:.1f}s")
+    print(f"  Subs: {Path(output_subs).name}")
+    return {"audio_path": output_audio, "subs_path": output_subs, "duration_sec": offset}
+
+
+# 豆包 2.0 推荐音色（通用/视频配音场景，中文）——网页音色列表用
+DOUBAO_VOICES = [
+    {"name": "zh_female_vv_uranus_bigtts",      "label": "vivi 2.0 · 女声 · 通用自然（推荐）"},
+    {"name": "zh_male_dayi_saturn_bigtts",      "label": "大壹 · 男声 · 视频配音"},
+    {"name": "zh_female_santongyongns_saturn_bigtts", "label": "流畅女声 · 视频配音"},
+    {"name": "zh_male_ruyayichen_saturn_bigtts", "label": "儒雅逸辰 · 男声 · 视频配音"},
+    {"name": "zh_female_gaolengyujie_uranus_bigtts", "label": "高冷御姐 · 女声 · 视频配音"},
+    {"name": "zh_female_jitangnv_saturn_bigtts", "label": "鸡汤女 · 女声 · 视频配音"},
+    {"name": "zh_male_shenyeboke_emo_v2_mars_bigtts", "label": "深夜播客 · 男声 · 磁性"},
+    {"name": "zh_female_wanwanxiaohe_mars_bigtts", "label": "湾湾小何 · 女声 · 台湾腔"},
+]
 
 
 def vtt_to_srt(vtt_path: str, srt_path: str) -> str:

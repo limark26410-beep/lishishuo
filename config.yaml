@@ -2,7 +2,7 @@ pipeline:
   name: 历史长音频流水线
   version: 1.0.0
 output:
-  library_root: /Users/local/Desktop/历史说素材/决战五千年/
+  library_root: /Users/local/Desktop/历史说素材/红楼梦/
   dirs:
     video: 成片
     images: 图片
@@ -13,29 +13,13 @@ output:
   backup_before_overwrite: true
   archive_images: false
 tts:
-  engine: edge-tts
-  voice: zh-CN-YunjianNeural
-  rate: -4%
+  engine: edge
+  voice: zh-CN-XiaoxiaoNeural
+  doubao:
+    voice: zh_female_vv_uranus_bigtts
+  rate: +5%
+  rate_manual: true
   subtitle_format: vtt
-  emotion_rates: {}
-
-# GL-20260828：创作类型（内容配方：写稿/配音/风格/关键词按类型匹配）
-content_types:
-  default: 故事
-  presets:
-    商品:
-      voice: zh-CN-XiaoxiaoNeural
-      rate: +5%
-      style: short
-    故事:
-      voice: zh-CN-YunjianNeural
-      rate: -4%
-      style: story
-    营销:
-      voice: zh-CN-YunxiNeural
-      rate: +50%
-      style: short
-  # GL-20260817-05 5b-3：段落级语速（按段落情绪自动套用；留空=整篇统一语速）
   emotion_rates: {}
 image:
   source: generate
@@ -65,17 +49,26 @@ video:
     zoom_end: 1.08
     pan_speed: 0.0004
     preview_scale: 2
-    emotions:             # GL-20260817-05 5b-2：按段落情绪调速（图片模式）
-      悬念: {zoom_end: 1.10, pan_speed: 0.0003}
-      平叙: {zoom_end: 1.08, pan_speed: 0.0004}
-      高潮: {zoom_end: 1.18, pan_speed: 0.0008}
-      收束: {zoom_end: 1.06, pan_speed: 0.0003}
+    emotions:
+      悬念:
+        zoom_end: 1.1
+        pan_speed: 0.0003
+      平叙:
+        zoom_end: 1.08
+        pan_speed: 0.0004
+      高潮:
+        zoom_end: 1.18
+        pan_speed: 0.0008
+      收束:
+        zoom_end: 1.06
+        pan_speed: 0.0003
   xfade:
     transition: fade
     duration: 1.0
   encoder_platform:
     darwin: h264_videotoolbox
     linux: libx264
+    win32: libx264
   encoder_options:
     libx264:
       crf: 26
@@ -84,6 +77,10 @@ video:
       bitrate: 3000k
   audio_codec: aac
   audio_bitrate: 192k
+  mode: image
+  crop_vertical:
+    enabled: true
+    keep: 0.7
 subtitle:
   font_path: /Library/Fonts/AdobeHeitiStd-Regular.otf
   font_path_linux: /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc
@@ -93,8 +90,9 @@ subtitle:
   max_chars_per_line: 14
   max_lines: 2
   outline_width: 3
+  font_path_windows: C:/Windows/Fonts/msyh.ttc
 title_card:
-  duration: 3
+  duration: 2
   main_font_size: 69
   series_font_size: 36
   line_gap: 25
@@ -107,11 +105,8 @@ bgm:
   enabled: true
   path: assets/bgm.mp3
   volume: 0.12
-  # GL-20260817-04：分段配乐专用音量（比单 BGM 高，无人声时明显可闻）
   seg_volume: 0.25
-  # GL-20260817-04：分段配乐库根目录，按情绪分目录：{悬念|平叙|高潮|收束}/*.mp3
-  # 库缺失/情绪缺素材 → 自动退回 path 单 BGM 兜底
-  library_root: ~/历史说素材/bgm/
+  library_root: /Users/local/Desktop/历史说素材/bgm/
 checks:
   max_line_length: true
   text_integrity: true
@@ -121,48 +116,63 @@ review:
 cleanup:
   clean_clips: true
   clean_images: false
-
-# GL-20260817-03：风格预设（制作选项「风格」下拉 → 运行时 deep-merge 进配置）
-# story=故事风格（长片·舒缓，不覆盖任何值=固化现状）｜ short=短视频风格（快节奏）
+video_source:
+  root: /Users/local/Desktop/视频素材/
+dropbox:
+  enabled: false
+  watch_dir: ~/历史说素材/投递/
+  out_dir: ~/历史说素材/成片/
+  interval_sec: 5
+  series: ''
 style:
   default: story
   presets:
     story: {}
     short:
       tts:
-        rate: "+100%"        # 2 倍速（实测 +200% 会被服务端封顶成 2 倍速，规范值用 +100%）
+        rate: +100%
       bgm:
-        volume: 0.20
+        volume: 0.2
       video:
-        transition: mixed    # 混合转场：高潮硬切 + 抒情溶解（5b-1）
+        transition: mixed
         ken_burns:
-          zoom_end: 1.12     # 动效更明显
+          zoom_end: 1.12
       subtitle:
-        font_size: 66        # 字幕更抓眼
+        font_size: 66
       title_card:
-        duration: 2          # 片头更短更冲
-
-
-# GL-20260828：画布（成片画幅）——竖屏保留现状，横屏新增
+        duration: 2
+content_types:
+  default: 故事
+  presets:
+    商品:
+      voice: zh-CN-XiaoxiaoNeural
+      rate: +5%
+      style: short
+      keyword_hint: 产品实拍、使用场景、细节特写
+    故事:
+      voice: zh-CN-YunjianNeural
+      rate: -4%
+      style: story
+      keyword_hint: 纪录片、历史、人物
+    营销:
+      voice: zh-CN-YunxiNeural
+      rate: +50%
+      style: short
+      keyword_hint: 宣传片、品牌、高冲击画面
 canvas:
   default: portrait
   presets:
     portrait:
       width: 1080
       height: 1920
-      aspect: "9:16"
-      image_size: "1080*1440"
+      aspect: '9:16'
+      image_size: 1080*1440
     landscape:
       width: 1920
       height: 1080
-      aspect: "16:9"
-      image_size: "1440*810"
-      subtitle:            # 横屏字幕参数（字号/行宽/位置与竖屏不同）
-        font_size: 76
-        max_chars_per_line: 24
-        margin_bottom: 200
-        bar_height: 240
-      subtitle:            # 横屏字幕参数（字号/行宽/位置与竖屏不同）
+      aspect: '16:9'
+      image_size: 1440*810
+      subtitle:
         font_size: 76
         max_chars_per_line: 24
         margin_bottom: 200

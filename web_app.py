@@ -648,7 +648,13 @@ class Handler(BaseHTTPRequestHandler):
                     "result_dir": TASK["result_dir"],
                 })
         elif u.path == "/api/voices":
-            """列出可用中文声线（edge-tts --list-voices），失败则用内置清单"""
+            """列出可用中文声线。?engine=doubao 返回豆包音色；否则返回 edge-tts 声线"""
+            q = urlparse(self.path).query
+            params = dict(kv.split("=", 1) for kv in q.split("&") if "=" in kv)
+            if params.get("engine") == "doubao":
+                from lib.tts_utils import DOUBAO_VOICES
+                return self._json({"voices": DOUBAO_VOICES, "engine": "doubao"})
+            # ── edge-tts ──
             fallback = [
                 {"name": "zh-CN-YunjianNeural",   "label": "云健 · 男声 · 沉稳解说（当前用）"},
                 {"name": "zh-CN-YunxiNeural",     "label": "云希 · 男声 · 年轻清朗"},
@@ -934,6 +940,12 @@ class Handler(BaseHTTPRequestHandler):
                 cfg["video"]["encoder_options"]["libx264"]["crf"] = int(adv["crf"])
             if "voice" in adv:
                 cfg.setdefault("tts", {})["voice"] = adv["voice"]
+            if "tts_engine" in adv and adv["tts_engine"] in ("edge", "doubao"):
+                # GL-20260831：配音引擎选择
+                cfg.setdefault("tts", {})["engine"] = adv["tts_engine"]
+            if "doubao_voice" in adv and adv["doubao_voice"]:
+                # 豆包音色（存 tts.doubao.voice）
+                cfg.setdefault("tts", {}).setdefault("doubao", {})["voice"] = adv["doubao_voice"]
             if "rate" in adv:
                 # GL-20260817-03：保存时规范化语速（28%→+28%），非法给中文提示
                 from lib.tts_utils import normalize_rate
