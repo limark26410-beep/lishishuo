@@ -125,6 +125,9 @@ def apply_canvas(cfg: dict, canvas) -> None:
     cfg.setdefault("video", {})["height"] = h
     if preset.get("image_size"):
         cfg.setdefault("image", {}).setdefault("tongyi", {})["size"] = preset["image_size"]
+    # 画布自带字幕参数（横屏字号/行宽/位置与竖屏不同）→ merge 进 cfg.subtitle
+    if preset.get("subtitle"):
+        cfg.setdefault("subtitle", {}).update(preset["subtitle"])
     # GL-20260828：横屏成片时关闭 crop_vertical（16:9 源正好适配，不裁上下；
     # 原字幕问题由横屏压暗条处理，见第二步）
     if canvas == "landscape":
