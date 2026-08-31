@@ -131,6 +131,16 @@
     </div>
 
     <div class="row">
+      <label>成片画幅</label>
+      <select id="a_canvas" style="flex:1">
+        <option value="portrait">竖屏 9:16（抖音/视频号）</option>
+        <option value="landscape">横屏 16:9（B站/西瓜/电脑）</option>
+        <option value="dual">双画幅（一次出竖屏+横屏）</option>
+      </select>
+      <div class="hint">GL-20260828：竖屏保留现状；横屏素材做横屏成片利用率100%；双画幅一次跑出两个</div>
+    </div>
+
+    <div class="row">
       <label>图片来源</label>
       <div class="radio-group">
         <label><input type="radio" name="imgsrc" value="generate" checked onchange="toggleImg()"> 自动生图</label>
@@ -849,6 +859,7 @@ async function start(){
     series: $('series').value.trim(),
     title_bg: $('titlebg').value.trim(),
     style: $('a_style').value,   // GL-20260817-03：风格预设（story/short）
+    canvas: $('a_canvas').value, // GL-20260828：成片画幅（portrait/landscape/dual）
   };
   // GL-20260817-01：图片来源三选一显式分支（消除隐式触发）
   const src = document.querySelector('input[name=imgsrc]:checked').value;

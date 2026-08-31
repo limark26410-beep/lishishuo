@@ -135,6 +135,14 @@ def apply_canvas(cfg: dict, canvas) -> None:
     print(f"  ▶ 画布: {canvas}（{w}x{h}，生图 {preset.get('image_size', '默认')}）")
 
 
+def _cv_path(episode_dir: str, name: str, canvas) -> str:
+    """GL-20260828：中间文件按画布区分（portrait/None 无后缀=兼容现状，landscape 加 _landscape）"""
+    if canvas in (None, "portrait"):
+        return os.path.join(episode_dir, name)
+    base, ext = os.path.splitext(name)
+    return os.path.join(episode_dir, f"{base}_{canvas}{ext}")
+
+
 def apply_style_preset(cfg: dict, style) -> None:
     """GL-20260817-03：把风格预设 deep-merge 进 cfg（预设优先）。
 
@@ -281,7 +289,7 @@ def step_image_gen(episode_dir: str, cfg: dict) -> dict:
     return result
 
 
-def step_mix(episode_dir: str, tts_result: dict, img_result: dict, cfg: dict) -> str:
+def step_mix(episode_dir: str, tts_result: dict, img_result: dict, cfg: dict, canvas=None) -> str:
     """Step 3-7: 混剪合成"""
     print(f"\n{'='*60}")
     print("STEP 3: 混剪合成")
@@ -291,7 +299,7 @@ def step_mix(episode_dir: str, tts_result: dict, img_result: dict, cfg: dict) ->
     subs_srt = tts_result["subs_srt"]
     audio_dur = tts_result["duration_sec"]
     images_dir = os.path.join(episode_dir, "images")
-    clips_dir = os.path.join(episode_dir, "clips")
+    clips_dir = _cv_path(episode_dir, "clips", canvas)
     os.makedirs(clips_dir, exist_ok=True)
 
     video_cfg = cfg.get("video", {})
@@ -308,7 +316,7 @@ def step_mix(episode_dir: str, tts_result: dict, img_result: dict, cfg: dict) ->
     # ── 视频模式分支（GL-20260814-02）：素材轮播截取 → concat → 复用后处理 ──
     # 图片模式代码一行不改，只在入口分流
     if video_cfg.get("mode") == "clip":
-        return _video_step_mix(episode_dir, tts_result, cfg)
+        return _video_step_mix(episode_dir, tts_result, cfg, canvas=canvas)
 
     # ── 3a. 解析图片结果 ──
     image_map = img_result.get("image_map", {})
@@ -396,7 +404,7 @@ def step_mix(episode_dir: str, tts_result: dict, img_result: dict, cfg: dict) ->
         clip_paths.append(clip_out)
 
     # ── 3d. 拼接 ──
-    merged_video = os.path.join(episode_dir, "_merged_video.mp4")
+    merged_video = _cv_path(episode_dir, "_merged_video.mp4", canvas)
     if trans == "xfade":
         print(f"\n  拼接 clips (xfade 交叉溶解)...")
         xfade_concat(
@@ -413,7 +421,7 @@ def step_mix(episode_dir: str, tts_result: dict, img_result: dict, cfg: dict) ->
 
     # ── 3e. 混音 ──
     print(f"\n  混音...")
-    audio_mixed = os.path.join(episode_dir, "_audio_mixed.mp4")
+    audio_mixed = _cv_path(episode_dir, "_audio_mixed.mp4", canvas)
     bgm_path = os.path.join(
         os.path.dirname(os.path.abspath(__file__)),
         bgm_cfg.get("path", "assets/bgm.mp3"),
@@ -430,7 +438,7 @@ def step_mix(episode_dir: str, tts_result: dict, img_result: dict, cfg: dict) ->
     # ── 3f. 字幕后处理 + 自动检查 ──
     print(f"\n  字幕折行处理...")
     subtitle_burn.configure(cfg)
-    processed_srt = os.path.join(episode_dir, "subs_processed.srt")
+    processed_srt = _cv_path(episode_dir, "subs_processed.srt", canvas)
     subtitle_burn.postprocess_srt(subs_srt, processed_srt)
 
     print(f"  自动检查（超长行 / 全文比对 / 行数）...")
@@ -443,7 +451,7 @@ def step_mix(episode_dir: str, tts_result: dict, img_result: dict, cfg: dict) ->
     sub_cfg = cfg.get("subtitle", {})
     print(f"\n  烧录字幕 (font={sub_cfg.get('font_size')}px, "
           f"margin_bottom={sub_cfg.get('margin_bottom')}px)...")
-    burned = os.path.join(episode_dir, "_burned.mp4")
+    burned = _cv_path(episode_dir, "_burned.mp4", canvas)
     _has_title = os.path.exists(os.path.join(episode_dir, "title_card.png"))
     subtitle_burn.burn_subtitles_overlay(
         video_path=audio_mixed,
@@ -455,8 +463,8 @@ def step_mix(episode_dir: str, tts_result: dict, img_result: dict, cfg: dict) ->
     # ── 3h. 片头 overlay ──
     tc_cfg = cfg.get("title_card", {})
     tc_dur = int(tc_cfg.get("duration", 3))
-    final_output = os.path.join(episode_dir, "final.mp4")
-    title_png = os.path.join(episode_dir, "title_card.png")
+    final_output = _cv_path(episode_dir, "final.mp4", canvas)
+    title_png = _cv_path(episode_dir, "title_card.png", canvas)
 
     if os.path.exists(title_png):
         print(f"\n  片头叠加 ({tc_dur}秒)...")
@@ -477,7 +485,7 @@ def step_mix(episode_dir: str, tts_result: dict, img_result: dict, cfg: dict) ->
     return final_output
 
 
-def _video_step_mix(episode_dir: str, tts_result: dict, cfg: dict) -> str:
+def _video_step_mix(episode_dir: str, tts_result: dict, cfg: dict, canvas=None) -> str:
     """视频模式混剪（GL-20260814-03：AI 智能选材版）。
 
     段落即选材单位：稿子分段 → 段落音频时长（subs.srt 聚合）→
@@ -493,7 +501,7 @@ def _video_step_mix(episode_dir: str, tts_result: dict, cfg: dict) -> str:
     audio_path = tts_result["audio_path"]
     subs_srt = tts_result["subs_srt"]
     audio_dur = tts_result["duration_sec"]
-    clips_dir = os.path.join(episode_dir, "clips")
+    clips_dir = _cv_path(episode_dir, "clips", canvas)
     os.makedirs(clips_dir, exist_ok=True)
 
     video_cfg = cfg.get("video", {})
@@ -596,7 +604,7 @@ def _video_step_mix(episode_dir: str, tts_result: dict, cfg: dict) -> str:
         clip_paths.append(clip_out)
 
     # ── 3v5. 拼接（concat 硬切 / xfade 交叉溶解 / mixed 混合，读 video.transition）──
-    merged_video = os.path.join(episode_dir, "_merged_video.mp4")
+    merged_video = _cv_path(episode_dir, "_merged_video.mp4", canvas)
     transition_mode = video_cfg.get("transition", "concat")
     if transition_mode == "xfade":
         print(f"\n  拼接 clips (xfade 交叉溶解)...")
@@ -639,7 +647,7 @@ def _video_step_mix(episode_dir: str, tts_result: dict, cfg: dict) -> str:
     except Exception as e:  # noqa: BLE001 标注失败不阻断，退回单 BGM
         print(f"  ⚠ 分段配乐准备失败（{type(e).__name__}: {e}），退回单 BGM")
         seg_audio = None
-    return _post_mix(episode_dir, merged_video, tts_result, cfg, seg_audio=seg_audio)
+    return _post_mix(episode_dir, merged_video, tts_result, cfg, seg_audio=seg_audio, canvas=canvas)
 
 
 def _resolve_video_plan(episode_dir: str, segments: list, materials: list) -> list:
@@ -720,7 +728,7 @@ def _material_by_path(materials: list, path: str):
 
 
 def _post_mix(episode_dir: str, merged_video: str, tts_result: dict, cfg: dict,
-              seg_audio: list = None) -> str:
+              seg_audio: list = None, canvas: str = None) -> str:
     """后处理（视频模式专用，与图片分支 3e-3h 同款逻辑）：
     混音 → 字幕折行检查 → 烧字幕 → 片头叠加 → 编码。
     图片分支代码保持不动，此函数只服务视频模式。
@@ -733,7 +741,7 @@ def _post_mix(episode_dir: str, merged_video: str, tts_result: dict, cfg: dict,
 
     # ── 混音 ──
     print(f"\n  混音...")
-    audio_mixed = os.path.join(episode_dir, "_audio_mixed.mp4")
+    audio_mixed = _cv_path(episode_dir, "_audio_mixed.mp4", canvas)
     bgm_path = os.path.join(
         os.path.dirname(os.path.abspath(__file__)),
         bgm_cfg.get("path", "assets/bgm.mp3"),
@@ -756,7 +764,7 @@ def _post_mix(episode_dir: str, merged_video: str, tts_result: dict, cfg: dict,
     # ── 字幕后处理 + 自动检查 ──
     print(f"\n  字幕折行处理...")
     subtitle_burn.configure(cfg)
-    processed_srt = os.path.join(episode_dir, "subs_processed.srt")
+    processed_srt = _cv_path(episode_dir, "subs_processed.srt", canvas)
     subtitle_burn.postprocess_srt(subs_srt, processed_srt)
 
     print(f"  自动检查（超长行 / 全文比对 / 行数）...")
@@ -769,7 +777,7 @@ def _post_mix(episode_dir: str, merged_video: str, tts_result: dict, cfg: dict,
     sub_cfg = cfg.get("subtitle", {})
     print(f"\n  烧录字幕 (font={sub_cfg.get('font_size')}px, "
           f"margin_bottom={sub_cfg.get('margin_bottom')}px)...")
-    burned = os.path.join(episode_dir, "_burned.mp4")
+    burned = _cv_path(episode_dir, "_burned.mp4", canvas)
     _has_title = os.path.exists(os.path.join(episode_dir, "title_card.png"))
     subtitle_burn.burn_subtitles_overlay(
         video_path=audio_mixed,
@@ -781,8 +789,8 @@ def _post_mix(episode_dir: str, merged_video: str, tts_result: dict, cfg: dict,
     # ── 片头 overlay ──
     tc_cfg = cfg.get("title_card", {})
     tc_dur = int(tc_cfg.get("duration", 3))
-    final_output = os.path.join(episode_dir, "final.mp4")
-    title_png = os.path.join(episode_dir, "title_card.png")
+    final_output = _cv_path(episode_dir, "final.mp4", canvas)
+    title_png = _cv_path(episode_dir, "title_card.png", canvas)
 
     if os.path.exists(title_png):
         print(f"\n  片头叠加 ({tc_dur}秒)...")
@@ -909,7 +917,9 @@ def main():
     apply_style_preset(cfg, getattr(args, "style", None))
 
     # GL-20260828：应用画布（成片画幅：竖屏/横屏），覆盖 video 尺寸 + 生图尺寸
-    apply_canvas(cfg, getattr(args, "canvas", None))
+    # dual 时交给混剪循环各自应用，这里不预应用
+    if getattr(args, "canvas", None) != "dual":
+        apply_canvas(cfg, getattr(args, "canvas", None))
 
     # GL-20260818 D3：手动语速优先——显式 --rate 覆盖风格预设的语速
     if getattr(args, "rate", None):
@@ -1099,9 +1109,19 @@ def main():
         except Exception as e:
             print(f"  ⚠ 片头生成失败: {e}")
 
-    # 混剪
+    # 混剪（GL-20260828：dual = 竖屏+横屏各出一版；单画布照常）
     if tts_result and img_result:
-        final_path = step_mix(episode_dir, tts_result, img_result, cfg)
+        import copy as _copy
+        cv_default = cfg.get("canvas", {}).get("default", "portrait")
+        raw_cv = getattr(args, "canvas", None)
+        canvases = (["portrait", "landscape"] if raw_cv == "dual"
+                    else [raw_cv or cv_default])
+        for cv in canvases:
+            cfg_cv = _copy.deepcopy(cfg)
+            apply_canvas(cfg_cv, cv)
+            final_path = step_mix(episode_dir, tts_result, img_result,
+                                  cfg_cv, canvas=cv)
+            print(f"  ✓ [{cv}] 成片: {final_path}")
     else:
         print("❌ TTS 或生图结果缺失")
         sys.exit(1)

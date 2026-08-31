@@ -367,6 +367,8 @@ def run_pipeline(params):
             cmd += ["--name", params["name"]]
         if params.get("style"):
             cmd += ["--style", params["style"]]  # GL-20260817-03：风格预设（story/short）
+        if params.get("canvas"):
+            cmd += ["--canvas", params["canvas"]]  # GL-20260828：成片画幅（portrait/landscape/dual）
         # GL-20260827：抓视频素材（先抓后走视频模式）
         if params.get("fetch_keyword"):
             cmd += ["--fetch-keyword", params["fetch_keyword"]]

@@ -162,3 +162,8 @@ canvas:
         max_chars_per_line: 24
         margin_bottom: 200
         bar_height: 240
+      subtitle:            # 横屏字幕参数（字号/行宽/位置与竖屏不同）
+        font_size: 76
+        max_chars_per_line: 24
+        margin_bottom: 200
+        bar_height: 240
