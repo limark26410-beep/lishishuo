@@ -11,6 +11,7 @@
 import os
 import re
 import subprocess
+import time
 
 import yt_dlp
 
@@ -161,8 +162,24 @@ def download(url: str, topic: str, start: str, end: str, desc: str,
         "outtmpl": outtmpl,
         "http_headers": headers or None,
     }
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(url, download=True)
+    # B 站 412 偶发反爬 → 自动重试（强制刷新 cookie）
+    last_err = None
+    for attempt in range(1, 4):
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+            break
+        except Exception as e:
+            last_err = e
+            if "412" in str(e) and attempt < 3:
+                _BVID_COOKIE["v"] = ""  # 强制重新取 buvid cookie
+                print(f"  ⚠ B站 412（第{attempt}次），{attempt * 5}秒后重试…")
+                time.sleep(attempt * 5)
+                opts["http_headers"] = _bili_headers()
+                continue
+            raise
+    else:
+        raise RuntimeError(f"B站下载失败（多次重试仍 412）: {last_err}")
 
     files = [f for f in os.listdir(outdir)
              if f.startswith(prefix) and f.lower().endswith((".mp4", ".mkv", ".webm"))]
