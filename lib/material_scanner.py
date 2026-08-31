@@ -110,6 +110,7 @@ def _scan_dir(theme_dir: Path, topic: str, theme: str,
                 "topic": topic,                      # 题材
                 "theme": theme,                      # 主题（无则空）
                 "desc": desc_map.get(f.name, ""),    # README 描述
+                "mtime": f.stat().st_mtime,          # 修改时间（新素材优先用）
                 "duration_sec": 0.0,
                 "width": 0,
                 "height": 0,

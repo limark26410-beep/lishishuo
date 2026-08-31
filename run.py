@@ -707,10 +707,15 @@ def _resolve_video_plan(episode_dir: str, segments: list, materials: list) -> li
 
 
 def _fallback_video_plan(segments: list, materials: list) -> list:
-    """降级：按顺序轮播分配（每段一条，用完循环）"""
+    """降级：按顺序轮播分配（每段一条，用完循环）。
+
+    GL-20260831：按 mtime 倒序（新素材优先）——刚抓的素材先用上，
+    避免轮播总选素材库前几个旧文件导致画面不变。
+    """
+    mats = sorted(materials, key=lambda m: m.get("mtime", 0), reverse=True)
     plan = []
     for i, s in enumerate(segments):
-        m = materials[i % len(materials)]
+        m = mats[i % len(mats)]
         plan.append({
             "index": s["index"],
             "text": s["text"],
