@@ -994,6 +994,11 @@ def main():
         cfg.setdefault("video_source", {})["root"] = os.path.join(lib_root, topic)
         video_mode = True
         print(f"  ▶ 视频模式：素材库 {cfg['video_source']['root']}（刚抓取）")
+        # 抓了新素材 → 清掉旧选材计划（强制重新选材用新素材，否则重跑同期限会复用旧画面）
+        _mp = os.path.join(episode_dir, "material_plan.json")
+        if os.path.exists(_mp):
+            os.remove(_mp)
+            print("  ⚠ 已清空旧选材计划（抓了新素材，将重新选材）")
 
     # GL-20260828：直接按链接下载单条素材（抖音等，绕过搜索）
     fetch_url = getattr(args, "fetch_url", None)
@@ -1008,6 +1013,10 @@ def main():
         cfg.setdefault("video_source", {})["root"] = os.path.join(lib_root, topic)
         video_mode = True
         print(f"  ▶ 视频模式：素材库 {cfg['video_source']['root']}（链接下载）")
+        _mp = os.path.join(episode_dir, "material_plan.json")
+        if os.path.exists(_mp):
+            os.remove(_mp)
+            print("  ⚠ 已清空旧选材计划（链接下载新素材，将重新选材）")
 
     if not os.path.exists(os.path.join(episode_dir, "script.txt")):
         print(f"❌ {episode_dir}/script.txt 不存在")
