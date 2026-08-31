@@ -141,3 +141,19 @@ style:
         font_size: 66        # 字幕更抓眼
       title_card:
         duration: 2          # 片头更短更冲
+
+
+# GL-20260828：画布（成片画幅）——竖屏保留现状，横屏新增
+canvas:
+  default: portrait
+  presets:
+    portrait:
+      width: 1080
+      height: 1920
+      aspect: "9:16"
+      image_size: "1080*1440"
+    landscape:
+      width: 1920
+      height: 1080
+      aspect: "16:9"
+      image_size: "1440*810"

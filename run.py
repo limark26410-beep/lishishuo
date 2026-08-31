@@ -103,6 +103,35 @@ def _build_bgm_map(bgm_cfg: dict) -> dict:
     return m
 
 
+def apply_canvas(cfg: dict, canvas) -> None:
+    """GL-20260828：应用画布（成片画幅）——覆盖 video 尺寸 + 生图尺寸。
+
+    canvas 取 config.yaml canvas.presets 的键（portrait/landscape）；None → 用 default。
+    未知画布 → 警告并回退默认。竖屏（portrait）= 现状尺寸，行为不变。
+    """
+    canvas_cfg = cfg.get("canvas", {})
+    presets = canvas_cfg.get("presets", {})
+    if not canvas:
+        canvas = canvas_cfg.get("default", "portrait")
+    preset = presets.get(canvas)
+    if preset is None:
+        if canvas:
+            print(f"  ⚠ 未知画布 '{canvas}'（可用: {', '.join(presets) or '无'}），回退默认")
+        canvas = canvas_cfg.get("default", "portrait")
+        preset = presets.get(canvas) or {}
+    w = int(preset.get("width", 1080))
+    h = int(preset.get("height", 1920))
+    cfg.setdefault("video", {})["width"] = w
+    cfg.setdefault("video", {})["height"] = h
+    if preset.get("image_size"):
+        cfg.setdefault("image", {}).setdefault("tongyi", {})["size"] = preset["image_size"]
+    # GL-20260828：横屏成片时关闭 crop_vertical（16:9 源正好适配，不裁上下；
+    # 原字幕问题由横屏压暗条处理，见第二步）
+    if canvas == "landscape":
+        cfg.setdefault("video", {}).setdefault("crop_vertical", {})["enabled"] = False
+    print(f"  ▶ 画布: {canvas}（{w}x{h}，生图 {preset.get('image_size', '默认')}）")
+
+
 def apply_style_preset(cfg: dict, style) -> None:
     """GL-20260817-03：把风格预设 deep-merge 进 cfg（预设优先）。
 
@@ -860,6 +889,8 @@ def main():
                         help="风格预设（config.yaml style.presets 的键，如 story/short；缺省用 style.default）")
     parser.add_argument("--rate", default=None,
                         help="手动语速（GL-20260818 D3：显式指定则优先于风格预设，如 --rate +5%%）")
+    parser.add_argument("--canvas", default=None,
+                        help="成片画幅（config canvas.presets 的键：portrait/landscape；缺省用 canvas.default）")
     parser.add_argument("--only", choices=["subtitle", "title", "encode"],
                         help="只重跑某一步（需已有中间产物）")
     args = parser.parse_args()
@@ -873,6 +904,9 @@ def main():
 
     # GL-20260817-03：应用风格预设（deep-merge 进 cfg，之后全链路照跑；故事=不覆盖=现状）
     apply_style_preset(cfg, getattr(args, "style", None))
+
+    # GL-20260828：应用画布（成片画幅：竖屏/横屏），覆盖 video 尺寸 + 生图尺寸
+    apply_canvas(cfg, getattr(args, "canvas", None))
 
     # GL-20260818 D3：手动语速优先——显式 --rate 覆盖风格预设的语速
     if getattr(args, "rate", None):
