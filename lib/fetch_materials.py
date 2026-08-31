@@ -48,6 +48,26 @@ def _get_buvid_cookie() -> str:
     return _BVID_COOKIE["v"]
 
 
+# B 站请求需完整浏览器头（UA/Accept/Referer 可过 412；buvid cookie 有则叠加）
+_BILI_HEADERS = {
+    "User-Agent": ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                   "AppleWebKit/537.36 (KHTML, like Gecko) "
+                   "Chrome/126.0.0.0 Safari/537.36"),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "zh-CN,zh;q=0.9",
+    "Referer": "https://www.bilibili.com/",
+}
+
+
+def _bili_headers() -> dict:
+    """B 站请求头：完整浏览器头 + buvid cookie（如有）"""
+    h = dict(_BILI_HEADERS)
+    ck = _get_buvid_cookie()
+    if ck:
+        h["Cookie"] = ck
+    return h
+
+
 def _fmt_dur(sec: int) -> str:
     sec = int(sec or 0)
     return f"{sec // 60}分{sec % 60:02d}s"
@@ -81,10 +101,7 @@ def search(keyword: str, count: int, dur_max: int = 0,
     """
     headers = {}
     if source == "bilibili":
-        headers = {"Referer": "https://www.bilibili.com/"}
-        ck = _get_buvid_cookie()
-        if ck:
-            headers["Cookie"] = ck
+        headers = _bili_headers()
     is_bili = source == "bilibili"
     opts = {
         "quiet": True, "no_warnings": True, "proxy": "",
@@ -127,10 +144,7 @@ def download(url: str, topic: str, start: str, end: str, desc: str,
     """
     headers = {}
     if source == "bilibili":
-        headers = {"Referer": "https://www.bilibili.com/"}
-        ck = _get_buvid_cookie()
-        if ck:
-            headers["Cookie"] = ck
+        headers = _bili_headers()
     outdir = os.path.join(root, topic)
     os.makedirs(outdir, exist_ok=True)
     existing = [f for f in os.listdir(outdir)
