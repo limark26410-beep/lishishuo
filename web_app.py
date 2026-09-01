@@ -922,6 +922,30 @@ class Handler(BaseHTTPRequestHandler):
                 "style_used": bool(result.get("style_used")),  # GL-20260901
             })
 
+        if u.path == "/api/save-script":
+            """GL-20260901：网页内直接修改 AI 稿子 → 写回 script.txt（保留初稿快照供风格学习）"""
+            episode = (data.get("episode") or "").strip()
+            script = (data.get("script") or "").strip()
+            if not episode or not script:
+                return self._json({"ok": False, "msg": "期号或稿子内容为空"})
+            ep_dir = BASE_DIR / "episodes" / episode
+            if not ep_dir.exists():
+                return self._json({"ok": False, "msg": f"期号目录不存在: {episode}"})
+            script_path = ep_dir / "script.txt"
+            # 若还没有初稿快照（用户改前生成过但未存），先留底当前内容
+            draft_fp = ep_dir / "script_ai_draft.txt"
+            if script_path.exists() and not draft_fp.exists():
+                try:
+                    draft_fp.write_text(script_path.read_text(encoding="utf-8"),
+                                        encoding="utf-8")
+                except Exception:
+                    pass
+            script_path.write_text(script, encoding="utf-8")
+            log(f"✏️ 网页内修改稿子：期号 {episode}，{len(script)} 字（已保存）")
+            return self._json({"ok": True,
+                               "msg": f"稿子已保存（{len(script)} 字）",
+                               "char_count": len(script)})
+
         if u.path == "/api/ai-start":
             """AI 模式开始制作：script.txt/prompts.json 已就位，直接跑 run_pipeline"""
             if TASK["running"]:

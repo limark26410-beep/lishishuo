@@ -388,13 +388,18 @@
         <div class="step" id="aiPreviewTitle"></div>
         <div class="hint" id="aiPreviewMeta"></div>
       </div>
-      <div style="margin-top:10px; padding:10px; background:#100d09; border-radius:6px;
-        font-size:13px; line-height:1.8; color:#9c9384; max-height:420px; overflow-y:auto;
-        white-space:pre-wrap;" id="aiPreviewText"></div>
+      <!-- GL-20260901：预览框可编辑——AI 稿子直接在网页里改，改完点「保存修改」 -->
+      <textarea id="aiPreviewText" rows="14" spellcheck="false"
+        style="margin-top:10px; width:100%; padding:10px; background:#100d09; border:1px solid #342d24;
+        border-radius:6px; color:#e8e4dc; font-size:13px; line-height:1.8; resize:vertical;
+        font-family:inherit; white-space:pre-wrap;"
+        placeholder="稿子生成中…"></textarea>
+      <div style="margin-top:4px; font-size:12px; color:#6b6352;">✏️ 可直接在框内修改稿子，改完点「保存修改」，再确认制作（改稿会被学习成你的风格，下次 AI 出稿更像你）</div>
       <div style="margin-top:12px; display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+        <button class="ghost" onclick="aiSaveScript()">💾 保存修改</button>
         <button onclick="aiConfirm()">✅ 确认，填入手动模式</button>
         <button class="ghost" onclick="aiRegenerate()">🔄 重新生成</button>
-        <button class="ghost" onclick="aiEditScript()">✏️ 手动修改稿子</button>
+        <span class="hint" id="aiEditHint"></span>
       </div>
     </div>
 
@@ -771,7 +776,11 @@ async function aiGenerate(){
     };
     $('aiPreviewTitle').textContent = r.title || '稿子生成完毕';
     $('aiPreviewMeta').textContent = `${r.char_count} 字 · ${r.image_count} 张图 · 期号 ${r.episode_id}`;
-    $('aiPreviewText').textContent = r.script_preview;
+    $('aiPreviewText').value = r.script_preview;
+    window._aiScriptSaved = true;  // 初稿即已写入 script.txt（ai-generate 已写）
+    // GL-20260901：用户一改动稿子框，标记为未保存（确认时提醒保存）
+    $('aiPreviewText').oninput = function(){ window._aiScriptSaved = false; };
+    $('aiEditHint').textContent = '';
     $('aiPreview').style.display = 'block';
     $('aiGenHint').textContent = '✅ 请预览确认后再制作';
   } catch(e){
@@ -785,16 +794,38 @@ async function aiRegenerate(){
   await aiGenerate();
 }
 
+// GL-20260901：网页内直接保存修改后的稿子（写回 script.txt，保留初稿快照供风格学习）
+async function aiSaveScript(){
+  const d = window._aiData;
+  if(!d || !d.episode_id){ alert('请先生成稿子'); return; }
+  const script = $('aiPreviewText').value.trim();
+  if(!script){ alert('稿子内容为空'); return; }
+  const r = await post('/api/save-script', {episode: d.episode_id, script});
+  $('aiEditHint').textContent = r.ok ? ('✓ ' + (r.msg||'已保存')) : ('✗ ' + (r.msg||'保存失败'));
+  if(r.ok){
+    window._aiScriptSaved = true;
+    $('aiPreviewMeta').textContent = $('aiPreviewMeta').textContent.replace(/\d+ 字/, script.length + ' 字');
+  }
+}
+
 async function aiEditScript(){
   const d = window._aiData;
   if(!d || !d.episode_dir) return;
   await openDir(d.episode_dir);
-  alert('已打开期号目录。请用文本编辑器修改 script.txt，改完回到本页点「确认，填入手动模式」');
+  alert('已打开期号目录。你也可以直接在网页的稿子框里修改后点「保存修改」');
 }
 
 async function aiConfirm(){
   const d = window._aiData;
   if(!d){ alert('请先生成稿子'); return; }
+
+  // GL-20260901：若网页内改过稿子但还没保存，先问是否保存
+  if(!window._aiScriptSaved){
+    const txt = $('aiPreviewText').value.trim();
+    if(txt && confirm('稿子有未保存的修改，是否先保存？')){
+      await aiSaveScript();
+    }
+  }
 
   // 1. 回填 1.0 手动模式表单
   $('episode').value = d.episode_id;
