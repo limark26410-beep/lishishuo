@@ -338,6 +338,16 @@
             <option value="720*1280">720*1280（9:16 小）</option>
           </select>
         </div>
+        <div><label>AI 稿模仿我的风格</label>
+          <select id="a_style_enabled">
+            <option value="1">开（从你的每次改稿中学习，越写越像你）</option>
+            <option value="0">关（通用模板风格）</option>
+          </select>
+          <div class="hint" style="display:block;margin-top:2px">AI 出稿 → 你改稿 → 工具对比初稿/终稿提炼你的改法，下次出稿自动模仿（GL-20260901）</div>
+          <button type="button" class="ghost" style="margin-top:4px" onclick="viewPersona()">查看风格画像</button>
+          <button type="button" class="ghost" style="margin-top:4px" onclick="resetPersona()">清空重学</button>
+          <div id="personaBox" class="hint" style="display:none;margin-top:6px;white-space:pre-wrap;background:rgba(255,255,255,.05);padding:8px;border-radius:6px"></div>
+        </div>
       </div>
       <div style="margin-top:12px"><button class="ghost" onclick="saveAdv()">保存设置</button>
         <span id="advMsg" class="hint" style="margin-left:10px"></span></div>
@@ -447,7 +457,40 @@ async function loadCfg(){
       if(m && [...$('a_model').options].some(o=>o.value===m)) $('a_model').value = m;
       if(sz && [...$('a_size').options].some(o=>o.value===sz)) $('a_size').value = sz;
     }
+    // GL-20260901：AI 稿风格模仿开关回填
+    const se = c.ai_script && c.ai_script.style_enabled;
+    if($('a_style_enabled')) $('a_style_enabled').value = (se === false) ? '0' : '1';
   }catch(e){}
+}
+
+// GL-20260901：查看/清空个人风格画像
+async function viewPersona(){
+  try{
+    const r = await (await fetch('/api/style-persona')).json();
+    const p = r.persona || {};
+    const rules = p.rules || [];
+    const box = $('personaBox');
+    if(!rules.length){
+      box.textContent = '还没有学到你的风格。去 AI 出稿后改一版稿子再制作，下次就会开始学习了。';
+    } else {
+      box.textContent = '🎓 已学习 ' + (p.episodes||0) + ' 期，当前规则：\n' +
+        rules.map((x,i)=>(i+1)+'. '+x).join('\n') +
+        '\n\n（样例存档 ' + (p.samples||[]).length + ' 条，供 AI 参考）';
+    }
+    box.style.display = 'block';
+  }catch(e){
+    $('personaBox').textContent = '查看失败：' + e.message;
+    $('personaBox').style.display = 'block';
+  }
+}
+
+async function resetPersona(){
+  if(!confirm('确定清空风格画像重新学习吗？')) return;
+  try{
+    const r = await (await fetch('/api/style-persona?action=reset')).json();
+    alert(r.msg || '已清空');
+    $('personaBox').style.display = 'none';
+  }catch(e){ alert('清空失败：' + e.message); }
 }
 window.addEventListener('load', async ()=>{ await loadVoices(); await loadCfg(); loadKeyStatus(); await loadVideoTopics(); loadDropbox(); toggleImg(); }); // GL-20260817-01：初始按默认「自动生图」确保 videoBox 隐藏
 
@@ -673,6 +716,7 @@ async function saveAdv(){
     video_source_root: $('a_video_root').value,
     img_model: $('a_model').value,
     img_size: $('a_size').value,
+    style_enabled: $('a_style_enabled').value === '1',
   }});
   if(r && r.ok === false){ alert(r.msg || '保存失败'); return false; } // GL-20260817-03：语速等校验失败提示
   $('advMsg').textContent = '已保存';

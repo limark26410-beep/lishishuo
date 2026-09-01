@@ -52,7 +52,7 @@ _TYPE_INSTRUCTIONS = {
 
 
 def _build_messages(instruction, duration_min, image_count, series_name,
-                    style_anchor, ctype="故事"):
+                    style_anchor, ctype="故事", persona_extra=""):
     """构造 system + user 消息。ctype: 商品/故事/营销（创作类型）"""
     anchor_line = ""
     if style_anchor:
@@ -72,6 +72,7 @@ def _build_messages(instruction, duration_min, image_count, series_name,
 7. 系列名默认「{series_name}」，除非用户指令明确指定其他系列。
 {anchor_line}
 {type_inst}
+{persona_extra}
 8. fetch_keywords：给出 2-3 个用于搜索视频素材画面的关键词（YouTube/B站搜索用），
    中英结合（英文命中率高），要能反映稿子的核心画面主题（人物/战争/城市/器物等），
    如"信陵君 战国 合纵 ancient china war"。不含年份、不含广告词。
@@ -139,7 +140,8 @@ def _extract_json(text):
 
 
 def generate_script(instruction, duration_min=3, api_key="",
-                    series_name="上下五千年", style_anchor="", ctype="故事"):
+                    series_name="上下五千年", style_anchor="", ctype="故事",
+                    base_dir="", style_enabled=True):
     """
     调用 qwen-max 生成稿件。
 
@@ -149,6 +151,9 @@ def generate_script(instruction, duration_min=3, api_key="",
         api_key: DeepSeek API Key
         series_name: 系列名，默认"上下五千年"
         style_anchor: 生图风格锚定词（可空）
+        ctype: 创作类型（商品/故事/营销）
+        base_dir: 项目根目录（找 persona.json；空则不注入风格）
+        style_enabled: 是否启用个人风格模仿（GL-20260901）
 
     返回:
         {
@@ -159,7 +164,8 @@ def generate_script(instruction, duration_min=3, api_key="",
           "image_prompts": ["生图提示词1", ...],
           "char_count": 字数,
           "series_name": 系列名,
-          "episode_name": 归档名建议
+          "episode_name": 归档名建议,
+          "style_used": 本次是否注入了个人风格
         }
 
     异常:
@@ -171,8 +177,21 @@ def generate_script(instruction, duration_min=3, api_key="",
     # 每 18 秒一张图（含 Ken Burns 动效），最少 6 张
     image_count = max(6, (duration_min * 60) // 18)
 
+    # GL-20260901：个人风格注入（persona.json 存在且有规则时才生效）
+    persona_extra = ""
+    style_used = False
+    if style_enabled and base_dir:
+        try:
+            from lib.style_learner import persona_prompt
+            persona_extra = persona_prompt(base_dir)
+            style_used = bool(persona_extra)
+        except Exception as e:
+            print(f"  ⚠ 风格注入失败（忽略，照常出稿）: {e}")
+            persona_extra = ""
+
     system, user = _build_messages(
-        instruction, duration_min, image_count, series_name, style_anchor, ctype)
+        instruction, duration_min, image_count, series_name, style_anchor, ctype,
+        persona_extra=persona_extra)
     content = _call_qwen(system, user, api_key)
     data = _extract_json(content)
 
@@ -202,6 +221,7 @@ def generate_script(instruction, duration_min=3, api_key="",
         "series_name": series,
         "episode_name": ep_name,
         "fetch_keywords": (data.get("fetch_keywords") or "").strip(),
+        "style_used": style_used,
     }
 
 

@@ -336,6 +336,31 @@ def run_pipeline(params):
             (ep_dir / "script.txt").write_text(body, encoding="utf-8")
             log(f"✓ 稿子就绪：{count_han(body)} 字（已去标题）")
 
+        # GL-20260901：个人风格学习——对比 AI 初稿快照 vs 当前终稿，提炼改稿风格
+        # （AI 模式且存在初稿快照且用户改过稿才学；失败不影响出片）
+        _draft_fp = ep_dir / "script_ai_draft.txt"
+        _style_enabled = bool(load_cfg().get("ai_script", {}).get("style_enabled", True))
+        if ai_mode and _draft_fp.exists() and _style_enabled:
+            try:
+                _draft = _draft_fp.read_text(encoding="utf-8")
+                _final = (ep_dir / "script.txt").read_text(encoding="utf-8")
+                _env = BASE_DIR / ".env"
+                _key = ""
+                if _env.exists():
+                    for _ln in _env.read_text(encoding="utf-8").splitlines():
+                        if _ln.strip().startswith("DEEPSEEK_API_KEY"):
+                            _key = _ln.split("=", 1)[-1].strip()
+                            break
+                if _key:
+                    from lib.style_learner import learn_from_edit
+                    _lr = learn_from_edit(_draft, _final, _key, str(BASE_DIR))
+                    if _lr.get("learned"):
+                        log(f"🎓 风格学习：{_lr.get('reason')}")
+                    else:
+                        log(f"（风格学习跳过：{_lr.get('reason')}）")
+            except Exception as e:
+                log(f"⚠ 风格学习失败（忽略，继续出片）: {e}")
+
         # 2. 本地图片 / 视频素材
         cmd = [sys.executable, str(BASE_DIR / "run.py"), "-e", episode]
         if params.get("video_dir"):
@@ -700,6 +725,17 @@ class Handler(BaseHTTPRequestHandler):
             # GL-20260828：返回创作类型默认值（前端选类型联动用）
             cfg.setdefault("content_types", {"default": "故事", "presets": {}})
             self._json(cfg)
+
+        elif u.path == "/api/style-persona":
+            """GL-20260901：个人风格画像查看/清空"""
+            from lib.style_learner import get_persona, reset_persona
+            q = urlparse(self.path).query
+            params = dict(kv.split("=", 1) for kv in q.split("&") if "=" in kv)
+            if params.get("action") == "reset":
+                persona = reset_persona(str(BASE_DIR))
+                return self._json({"ok": True, "msg": "已清空画像，重新开始学习", "persona": persona})
+            persona = get_persona(str(BASE_DIR))
+            self._json({"ok": True, "persona": persona})
         elif u.path == "/api/dropbox":
             """GL-20260814-04：投递目录配置 + 最近处理记录"""
             dcfg = _dropbox_cfg()
@@ -841,11 +877,15 @@ class Handler(BaseHTTPRequestHandler):
                                    "msg": "未配置 DEEPSEEK_API_KEY，请到高级设置里填写"})
             cfg = load_cfg()
             try:
+                # GL-20260901：个人风格开关 + 注入 persona（web 高级设置里可关）
+                style_enabled = bool(cfg.get("ai_script", {}).get("style_enabled", True))
                 result = generate_script(
                     instruction, duration_min, api_key,
                     series_name=cfg.get("title_card", {}).get("series_name", "上下五千年"),
                     style_anchor=cfg.get("image", {}).get("style_anchor", ""),
                     ctype=(data.get("ctype") or cfg.get("content_types", {}).get("default", "故事")),
+                    base_dir=str(BASE_DIR),
+                    style_enabled=style_enabled,
                 )
             except AIScriptError as e:
                 return self._json({"ok": False, "msg": str(e)})
@@ -854,6 +894,12 @@ class Handler(BaseHTTPRequestHandler):
             ep_dir = BASE_DIR / "episodes" / episode_id
             ep_dir.mkdir(parents=True, exist_ok=True)
             (ep_dir / "script.txt").write_text(result["full_script"], encoding="utf-8")
+            # GL-20260901：存 AI 初稿快照（出片前对比 → 学习使用者改稿风格）
+            try:
+                (ep_dir / "script_ai_draft.txt").write_text(
+                    result["full_script"], encoding="utf-8")
+            except Exception:
+                pass
             prompts = [{"id": "auto_01", "title": "AI 生成",
                         "prompts": result["image_prompts"]}]
             (ep_dir / "prompts.json").write_text(
@@ -873,6 +919,7 @@ class Handler(BaseHTTPRequestHandler):
                 "series_name": result["series_name"],
                 "episode_name": result["episode_name"],
                 "fetch_keywords": result.get("fetch_keywords", ""),
+                "style_used": bool(result.get("style_used")),  # GL-20260901
             })
 
         if u.path == "/api/ai-start":
@@ -966,6 +1013,9 @@ class Handler(BaseHTTPRequestHandler):
                 cfg.setdefault("image", {}).setdefault("tongyi", {})["model"] = adv["img_model"]
             if "img_size" in adv and adv["img_size"]:
                 cfg.setdefault("image", {}).setdefault("tongyi", {})["size"] = adv["img_size"]
+            if "style_enabled" in adv:
+                # GL-20260901：AI 稿模仿个人风格开关
+                cfg.setdefault("ai_script", {})["style_enabled"] = bool(adv["style_enabled"])
             save_cfg(cfg)
             return self._json({"ok": True})
 

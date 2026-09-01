@@ -14,13 +14,17 @@ output:
   archive_images: false
 tts:
   engine: edge
-  voice: zh-CN-XiaoxiaoNeural
+  voice: zh-CN-YunjianNeural
   doubao:
-    voice: zh_female_vv_uranus_bigtts
-  rate: +5%
+    voice: zh_male_dayi_saturn_bigtts
+  rate: -4%
   rate_manual: true
   subtitle_format: vtt
   emotion_rates: {}
+ai_script:
+  # GL-20260901：AI 稿模仿使用者个人风格（从每次改稿中学习，越写越像）
+  style_enabled: true
+
 image:
   source: generate
   local_dir: ''
