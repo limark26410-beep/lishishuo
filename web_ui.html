@@ -377,6 +377,15 @@
         <option value="8">8 分钟（约2000字）</option>
       </select>
     </div>
+    <div class="flex" style="gap:10px; align-items:center; margin-top:8px;">
+      <label style="margin:0;">文风：</label>
+      <select id="aiStyle" style="width:auto; flex:1;">
+        <option value="">默认（口语化·有故事感）</option>
+        <option value="yuqiuyu">余秋雨式 · 文化散文（历史纵深·哲思·悲悯）</option>
+        <option value="storyteller">讲书人式 · 娓娓道来（《明朝那些事儿》感）</option>
+        <option value="suspense">说书人式 · 悬念迭起（评书/悬念节奏）</option>
+      </select>
+    </div>
     <div style="margin-top:14px;">
       <button id="aiGenBtn" onclick="aiGenerate()">🤖 生成稿子</button>
       <span id="aiGenHint" class="hint" style="margin-left:10px;"></span>
@@ -761,7 +770,7 @@ async function aiGenerate(){
   $('aiPreview').style.display = 'none';
 
   try {
-    const r = await post('/api/ai-generate', {instruction, duration_min: duration, ctype: $('a_ctype').value});
+    const r = await post('/api/ai-generate', {instruction, duration_min: duration, ctype: $('a_ctype').value, wstyle: $('aiStyle').value});
     if(!r.ok){ $('aiGenHint').textContent = '❌ ' + r.msg; return; }
 
     // 存到变量，等用户点「确认」后再统一回填手动表单

@@ -886,6 +886,7 @@ class Handler(BaseHTTPRequestHandler):
                     ctype=(data.get("ctype") or cfg.get("content_types", {}).get("default", "故事")),
                     base_dir=str(BASE_DIR),
                     style_enabled=style_enabled,
+                    wstyle=(data.get("wstyle") or ""),  # GL-20260901：文风预设
                 )
             except AIScriptError as e:
                 return self._json({"ok": False, "msg": str(e)})

@@ -51,13 +51,49 @@ _TYPE_INSTRUCTIONS = {
 }
 
 
+# GL-20260901：文风预设（AI 出稿可选，注入 system prompt 追加段落）
+_WSTYLE_INSTRUCTIONS = {
+    "yuqiuyu": (
+        "【本次文风：余秋雨式文化散文】\n"
+        "- 从一件具体的器物/地点/画面起笔（一尊石像、一座塔、一页残卷、一条古道），"
+        "先写看得见的东西，再引向看不见的历史与人心\n"
+        "- 有历史纵深：把眼前之物放到千年尺度里写，用年代、王朝、地理作背景\n"
+        "- 融入哲思与悲悯：文明、废墟、宿命、时间，让人在结尾感到一种苍凉的美\n"
+        "- 句式讲究韵律：长短句交错，偶用对仗与排比，但不过度堆砌\n"
+        "- 结尾一句格言式升华收束（如'于是，历史在这里沉默了'这类），不喊口号\n"
+        "- 语气沉稳、克制、有分量，像一位学者在废墟前独自沉吟，而非激情演说"),
+    "storyteller": (
+        "【本次文风：讲书人式娓娓道来（《明朝那些事儿》感）】\n"
+        "- 用大白话讲正史，像老朋友聊天，轻松但不轻浮\n"
+        "- 常插入一句俏皮点评或现代类比（如'相当于今天的……'），拉近距离\n"
+        "- 人物当活人写：有性格、有小动作、有心理活动\n"
+        "- 节奏明快，多用短句，段落短小\n"
+        "- 收尾干脆，常留一句余味或反转让读者回味"),
+    "suspense": (
+        "【本次文风：说书人式悬念迭起】\n"
+        "- 开篇即悬念/谜面（一个反常细节、一个未解之谜、一个惊人数字）\n"
+        "- 层层剥茧：每段揭一层，段尾留钩子（'可谁也没想到……''偏偏这时候……'）\n"
+        "- 多用设问句推进，节奏紧张，像评书扣子\n"
+        "- 转折要陡，最后揭底，让观众'哦——原来如此'\n"
+        "- 语气带劲、有现场感，像说书先生醒木一拍"),
+}
+
+_STYLE_HINTS = {
+    "yuqiuyu": "余秋雨式 · 文化散文",
+    "storyteller": "讲书人式 · 娓娓道来",
+    "suspense": "说书人式 · 悬念迭起",
+}
+
+
 def _build_messages(instruction, duration_min, image_count, series_name,
-                    style_anchor, ctype="故事", persona_extra=""):
+                    style_anchor, ctype="故事", persona_extra="", wstyle=""):
     """构造 system + user 消息。ctype: 商品/故事/营销（创作类型）"""
     anchor_line = ""
     if style_anchor:
         anchor_line = f'8. 生图提示词需额外融入风格描述：「{style_anchor}」。\n'
     type_inst = _TYPE_INSTRUCTIONS.get(ctype) or _TYPE_INSTRUCTIONS["故事"]
+    wstyle_inst = _WSTYLE_INSTRUCTIONS.get(wstyle or "")
+    wstyle_line = (wstyle_inst + "\n") if wstyle_inst else ""
     system = f"""你是一位专业的文史类短视频文案创作者，专为抖音/视频号平台撰写口播稿。
 
 你的文案风格：口语化、有故事感、有感染力、三秒钩子抓住观众。像一位纪录片导演在镜头前娓娓道来，而不是在念百科条目。
@@ -72,6 +108,7 @@ def _build_messages(instruction, duration_min, image_count, series_name,
 7. 系列名默认「{series_name}」，除非用户指令明确指定其他系列。
 {anchor_line}
 {type_inst}
+{wstyle_line}
 {persona_extra}
 8. fetch_keywords：给出 2-3 个用于搜索视频素材画面的关键词（YouTube/B站搜索用），
    中英结合（英文命中率高），要能反映稿子的核心画面主题（人物/战争/城市/器物等），
@@ -141,7 +178,7 @@ def _extract_json(text):
 
 def generate_script(instruction, duration_min=3, api_key="",
                     series_name="上下五千年", style_anchor="", ctype="故事",
-                    base_dir="", style_enabled=True):
+                    base_dir="", style_enabled=True, wstyle=""):
     """
     调用 qwen-max 生成稿件。
 
@@ -154,6 +191,7 @@ def generate_script(instruction, duration_min=3, api_key="",
         ctype: 创作类型（商品/故事/营销）
         base_dir: 项目根目录（找 persona.json；空则不注入风格）
         style_enabled: 是否启用个人风格模仿（GL-20260901）
+        wstyle: 文风预设（yuqiuyu/storyteller/suspense；空=默认，GL-20260901）
 
     返回:
         {
@@ -191,7 +229,7 @@ def generate_script(instruction, duration_min=3, api_key="",
 
     system, user = _build_messages(
         instruction, duration_min, image_count, series_name, style_anchor, ctype,
-        persona_extra=persona_extra)
+        persona_extra=persona_extra, wstyle=wstyle)
     content = _call_qwen(system, user, api_key)
     data = _extract_json(content)
 
