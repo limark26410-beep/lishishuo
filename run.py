@@ -363,6 +363,26 @@ def step_mix(episode_dir: str, tts_result: dict, img_result: dict, cfg: dict, ca
     print(f"\n  可用图片: {num_images}")
     print(f"  音频时长: {_time_str(audio_dur)}")
 
+    # ── 3a.5 图片智能匹配（升级：段落关键词 ↔ 图名标签重排）──
+    # 回滚：删除本段（3a.5 到 END 3a.5）即恢复平均轮播；原顺序在 image_paths 被重排前已保留
+    try:
+        from img_matcher import match_images_to_segments
+        _mp = Path(os.path.join(episode_dir, "script.txt"))
+        if _mp.exists():
+            from script_seg import split_segments
+            with open(_mp, encoding="utf-8") as _f:
+                _body = _f.read()
+            _segs = split_segments(_body)
+            if _segs:
+                image_paths, _diag = match_images_to_segments(_segs, image_paths)
+                print(f"  🔀 图片智能匹配: 命中段落 {_diag.get('segments_with_hits', 0)} 个, "
+                      f"匹配图 {_diag.get('matched_images', 0)}/{_diag.get('total_images', 0)} 张")
+                if _diag.get("assigned_by_seg"):
+                    print(f"     每段分配: {_diag['assigned_by_seg']}")
+    except Exception as _e:  # noqa: BLE001
+        print(f"  ⚠ 图片智能匹配失败（{type(_e).__name__}: {_e}），回退平均轮播")
+    # ── END 3a.5 ──
+
     # ── 3b. 时间分配 ──
     if trans == "xfade":
         xfade_dur = xfade_cfg.get("duration", 1.0)
@@ -505,6 +525,22 @@ def step_mix(episode_dir: str, tts_result: dict, img_result: dict, cfg: dict, ca
         output_path=burned,
         encode_args=_encode_args(cfg, final=not _has_title),
     )
+
+    # ── 3g.5 关键词字卡叠加（升级：句级关键词金字浮现）──
+    # 回滚：删除本段（3g.5 到 END 3g.5）即恢复纯字幕
+    try:
+        from keyword_cards import overlay_keyword_cards
+        _cards_out = _cv_path(episode_dir, "_burned_cards.mp4", canvas)
+        overlay_keyword_cards(
+            video_path=burned,
+            srt_path=processed_srt,
+            output_path=_cards_out,
+            encode_args=_encode_args(cfg, final=False),
+        )
+        burned = _cards_out
+    except Exception as _e:  # noqa: BLE001
+        print(f"  ⚠ 关键词字卡叠加失败（{type(_e).__name__}: {_e}），跳过")
+    # ── END 3g.5 ──
 
     # ── 3h. 片头 overlay ──
     tc_cfg = cfg.get("title_card", {})
