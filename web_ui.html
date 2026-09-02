@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<title>历史说 · 出片工具</title>
+<title>视频制作工作台</title>
 <style>
   * { box-sizing: border-box; }
   body {
@@ -126,12 +126,16 @@
 
   <!-- ── 左侧菜单（GL-20260902） ── -->
   <aside class="sidebar">
-    <div class="logo">历史说<small>视频制作工作台</small></div>
+    <div class="logo">视频制作工作台<small>历史说出片工具</small></div>
     <div class="side-group">
       <div class="group-title">出片</div>
-      <button class="side-item" data-view="manual" onclick="switchView('manual')"><span class="ic">📄</span>手动模式</button>
       <button class="side-item" data-view="ai" onclick="switchView('ai')"><span class="ic">🤖</span>AI 智能出稿</button>
-      <button class="side-item" data-view="workbench" onclick="switchView('workbench')"><span class="ic">🎛</span>工作台</button>
+      <button class="side-item" data-view="manual" onclick="switchView('manual')"><span class="ic">📄</span>手动改稿</button>
+      <button class="side-item" data-view="workbench" onclick="switchView('workbench')"><span class="ic">🎬</span>视频制作</button>
+    </div>
+    <div class="side-group">
+      <div class="group-title">配音</div>
+      <button class="side-item" data-view="voice" onclick="switchView('voice')"><span class="ic">🎙️</span>声音选择</button>
     </div>
     <div class="side-group">
       <div class="group-title">任务</div>
@@ -467,6 +471,36 @@
     </div>
   </div>
 
+  <!-- 🎙️ 声音选择（GL-20260902：从高级设置拆出独立面板） -->
+  <div class="card view-panel" id="voicePanel">
+    <div class="step">🎙️ 声音选择</div>
+    <div class="adv" style="margin-top:14px">
+      <div><label>TTS 引擎</label>
+        <select id="a_engine" onchange="switchEngine()">
+          <option value="edge">微软 edge（免费 · 稳定）</option>
+          <option value="doubao">豆包语音（更自然 · 需 API Key）</option>
+        </select>
+        <div class="hint" style="display:block;margin-top:2px">豆包音质更自然、字幕逐字对齐；需先开通并填 DOUBAO_TTS_KEY（.env）；失败自动回退微软</div>
+      </div>
+      <div><label>TTS 声线</label>
+        <select id="a_voice"><option value="zh-CN-YunjianNeural">云健 · 男声 · 沉稳解说（当前）</option></select>
+      </div>
+      <div><label>TTS 语速</label><input type="text" id="a_rate" value="-4%" placeholder="如 +28% 加速 / -4% 减速" oninput="this.dataset.touched=1"><div class="hint" style="display:block;margin-top:2px">须带正负号：+28% 加速、-4% 减速；2 倍速写 +100%；手动改过则优先于风格预设</div></div>
+      <div><label>AI 稿模仿我的风格</label>
+        <select id="a_style_enabled">
+          <option value="1">开（从你的每次改稿中学习，越写越像你）</option>
+          <option value="0">关（通用模板风格）</option>
+        </select>
+        <div class="hint" style="display:block;margin-top:2px">AI 出稿 → 你改稿 → 工具对比提炼你的改法，下次自动模仿</div>
+        <button type="button" class="ghost" style="margin-top:4px" onclick="viewPersona()">查看风格画像</button>
+        <button type="button" class="ghost" style="margin-top:4px" onclick="resetPersona()">清空重学</button>
+        <div id="personaBox" class="hint" style="display:none;margin-top:6px;white-space:pre-wrap;background:rgba(255,255,255,.05);padding:8px;border-radius:6px"></div>
+      </div>
+    </div>
+    <div style="margin-top:12px"><button class="ghost" onclick="saveAdv()">保存声音设置</button>
+      <span id="voiceMsg" class="hint" style="margin-left:10px"></span></div>
+  </div>
+
   <!-- ⚙️ 高级设置（GL-20260902：从折叠提为独立面板） -->
   <div class="card view-panel" id="settingsPanel">
     <div class="row">
@@ -486,17 +520,6 @@
       <div><label>字幕底边距(px)</label><input type="number" id="a_margin" value="400"></div>
       <div><label>字幕字号</label><input type="number" id="a_font" value="60"></div>
       <div><label>编码质量 CRF</label><input type="number" id="a_crf" value="26"></div>
-      <div><label>TTS 引擎</label>
-        <select id="a_engine" onchange="switchEngine()">
-          <option value="edge">微软 edge（免费 · 稳定）</option>
-          <option value="doubao">豆包语音（更自然 · 需 API Key）</option>
-        </select>
-        <div class="hint" style="display:block;margin-top:2px">豆包音质更自然、字幕逐字对齐；需先开通并填 DOUBAO_TTS_KEY（.env）；失败自动回退微软</div>
-      </div>
-      <div><label>TTS 声线</label>
-        <select id="a_voice"><option value="zh-CN-YunjianNeural">云健 · 男声 · 沉稳解说（当前）</option></select>
-      </div>
-      <div><label>TTS 语速</label><input type="text" id="a_rate" value="-4%" placeholder="如 +28% 加速 / -4% 减速" oninput="this.dataset.touched=1"><div class="hint" style="display:block;margin-top:2px">须带正负号：+28% 加速、-4% 减速；2 倍速写 +100%；手动改过则优先于风格预设</div></div>
       <div><label>生图模型</label>
         <select id="a_model">
           <optgroup label="通义万相">
@@ -518,16 +541,6 @@
           <option value="720*1280">720*1280（9:16 小）</option>
         </select>
       </div>
-      <div><label>AI 稿模仿我的风格</label>
-        <select id="a_style_enabled">
-          <option value="1">开（从你的每次改稿中学习，越写越像你）</option>
-          <option value="0">关（通用模板风格）</option>
-        </select>
-        <div class="hint" style="display:block;margin-top:2px">AI 出稿 → 你改稿 → 工具对比提炼你的改法，下次自动模仿</div>
-        <button type="button" class="ghost" style="margin-top:4px" onclick="viewPersona()">查看风格画像</button>
-        <button type="button" class="ghost" style="margin-top:4px" onclick="resetPersona()">清空重学</button>
-        <div id="personaBox" class="hint" style="display:none;margin-top:6px;white-space:pre-wrap;background:rgba(255,255,255,.05);padding:8px;border-radius:6px"></div>
-      </div>
     </div>
     <div style="margin-top:12px"><button class="ghost" onclick="saveAdv()">保存设置</button>
       <span id="advMsg" class="hint" style="margin-left:10px"></span></div>
@@ -541,9 +554,17 @@
         <input type="checkbox" id="db_enabled"> 开启自动出片
       </label>
     </div>
-    <div class="flex" style="margin-top:8px;">
-      <input type="text" id="db_watch" value="~/历史说素材/投递" style="flex:1" placeholder="投递目录">
-      <input type="text" id="db_out" value="~/历史说素材/成片" style="flex:1;margin-left:10px" placeholder="成片输出目录">
+    <div style="margin-top:8px">
+      <label class="hint" style="display:block;margin-bottom:4px">稿子投递目录</label>
+      <div class="flex">
+        <input type="text" id="db_watch" style="flex:1" placeholder="~/历史说素材/投递">
+        <button class="ghost" onclick="pickDropboxDir('watch')">选择目录</button>
+      </div>
+      <label class="hint" style="display:block;margin:10px 0 4px">成片输出目录</label>
+      <div class="flex">
+        <input type="text" id="db_out" style="flex:1" placeholder="~/历史说素材/成片">
+        <button class="ghost" onclick="pickDropboxDir('out')">选择目录</button>
+      </div>
     </div>
     <div style="margin-top:10px">
       <button class="ghost" onclick="saveDropbox()">保存投递设置</button>
@@ -565,6 +586,7 @@ const _VIEWS = {
   manual:    'manualPanel',
   ai:        'aiPanel',
   workbench: 'workbenchPanel',
+  voice:     'voicePanel',
   progress:  'progressPanel',
   settings:  'settingsPanel',
   dropbox:   'dropboxPanel',
@@ -675,6 +697,11 @@ async function loadDropbox(){
   }catch(e){}
 }
 
+async function pickDropboxDir(which){
+  const r = await post('/api/pick', {kind:'dir'});
+  if(r.ok){ $('db_' + which).value = r.path; }
+}
+
 async function saveDropbox(){
   const r = await post('/api/dropbox', {
     enabled: $('db_enabled').checked,
@@ -682,10 +709,11 @@ async function saveDropbox(){
     out_dir: $('db_out').value.trim(),
   });
   if(r.ok){
-    alert(r.enabled ? '✅ 投递目录已开启，新稿子丢进目录即自动出片' : '投递目录已关闭');
+    $('dbMsg').textContent = r.enabled ? '✅ 已保存并开启自动出片' : '✅ 已保存（未开启自动出片）';
+    setTimeout(()=>{ $('dbMsg').textContent = ''; }, 3000);
     loadDropbox();
   } else {
-    alert('保存失败：' + (r.msg || '未知错误'));
+    $('dbMsg').textContent = '✗ 保存失败：' + (r.msg || '未知错误');
   }
 }
 
@@ -875,8 +903,9 @@ async function saveAdv(){
     style_enabled: $('a_style_enabled').value === '1',
   }});
   if(r && r.ok === false){ alert(r.msg || '保存失败'); return false; } // GL-20260817-03：语速等校验失败提示
-  $('advMsg').textContent = '已保存';
-  setTimeout(()=>$('advMsg').textContent='', 2000);
+  // GL-20260902：声音面板与高级设置面板各自显示保存提示
+  if($('advMsg')){ $('advMsg').textContent = '已保存'; setTimeout(()=>$('advMsg').textContent='', 2000); }
+  if($('voiceMsg')){ $('voiceMsg').textContent = '已保存'; setTimeout(()=>$('voiceMsg').textContent='', 2000); }
   return true;
 }
 
