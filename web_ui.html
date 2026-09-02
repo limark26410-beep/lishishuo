@@ -909,7 +909,9 @@ function renderFetchPreview(items, source){
     let thumbEl;
     if(it.thumbnail){
       thumbEl = document.createElement('img');
-      thumbEl.src = it.thumbnail; thumbEl.loading = 'lazy';
+      // B 站缩略图走后端代理（浏览器直连 hdslb 常失败）
+      thumbEl.src = '/api/thumb?url=' + encodeURIComponent(it.thumbnail);
+      thumbEl.loading = 'lazy';
       thumbEl.style.cssText = 'width:96px;height:54px;object-fit:cover;border-radius:4px;flex:0 0 auto;background:#0b0906;';
       thumbEl.onerror = function(){ this.style.display = 'none'; };
     } else {

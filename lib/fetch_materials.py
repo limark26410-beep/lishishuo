@@ -239,13 +239,29 @@ def search(keyword: str, count: int, dur_max: int = 0,
         # YouTube：extract_flat 快搜（条目信息足够）
         opts["extract_flat"] = "in_playlist"
         opts["playlist_items"] = f"1-{count}"
-    query = (f"bilisearch:{keyword}" if is_bili
+    else:
+        # B 站：完整提取拿全元数据（缩略图/时长/UP主），playlist_items 限定条数
+        # 不用 extract_flat——扁平模式 B 站条目只有 id 没有缩略图/时长
+        opts["playlist_items"] = f"1-{count}"
+        opts["extract_flat"] = False
+    query = (f"bilisearch{count}:{keyword}" if is_bili
              else f"ytsearch{count}:{keyword}")
+    # B 站完整提取较慢（每条解析页面），单条超时给足
+    if is_bili:
+        opts["socket_timeout"] = 30
+        opts["retries"] = 2
+        # B 站搜索结果常混入课堂/付费课程链接（yt-dlp 无 extractor 会抛异常），
+        # ignoreerrors 让单条失败跳过而不是整体失败
+        opts["ignoreerrors"] = True
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(query, download=False)
     entries = []
     for e in (info.get("entries") or []):
         if not e:
+            continue
+        # 跳过 B 站课堂/付费课程等 yt-dlp 无 extractor 的链接
+        dl_url = e.get("webpage_url") or ""
+        if is_bili and ("/cheese/" in dl_url or "bilibili.com/cheese" in dl_url):
             continue
         dur = e.get("duration") or 0
         if dur_max and dur > dur_max:
@@ -256,14 +272,16 @@ def search(keyword: str, count: int, dur_max: int = 0,
         if ths:
             thumb = ths[0].get("url", "")
         # 下载 URL：webpage_url 缺失时按平台标准链接拼
-        dl_url = e.get("webpage_url") or ""
         if not dl_url and vid:
             dl_url = (f"https://www.bilibili.com/video/{vid}" if is_bili
                       else f"https://www.youtube.com/watch?v={vid}")
+        # B 站缩略图是 http 直链，浏览器混合内容会拦截 → 统一转 https
+        if thumb.startswith("http://"):
+            thumb = "https://" + thumb[len("http://"):]
         entries.append({
             "title": e.get("title", "?"),
             "duration": dur,
-            "channel": e.get("channel", "?"),
+            "channel": e.get("channel") or e.get("uploader") or "?",
             "id": vid,
             "thumbnail": thumb,
             "url": dl_url,

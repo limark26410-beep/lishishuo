@@ -713,6 +713,40 @@ class Handler(BaseHTTPRequestHandler):
                     return
             self._json({"ok": False, "msg": "图片不存在"}, 404)
 
+        elif u.path.startswith("/api/thumb"):
+            """GL-20260902：B 站缩略图代理（浏览器直连 hdslb 图床常失败，后端下载再转发）"""
+            q = urlparse(self.path).query
+            params = dict(kv.split("=", 1) for kv in q.split("&") if "=" in kv)
+            url = params.get("url", "")
+            if url:
+                import urllib.parse as _up
+                url = _up.unquote(url)
+            if not url:
+                return self._json({"ok": False, "msg": "缺 url"}, 400)
+            # 只允许图片域名，防代理滥用
+            if not any(d in url for d in ("hdslb.com", "i.ytimg.com", "images.pexels.com", "ytimg.com")):
+                return self._json({"ok": False, "msg": "非法图片源"}, 400)
+            try:
+                import requests as _req
+                # 强制不走代理：webapp 继承的代理会掐 B 站图床连接（SSL 中断）
+                _sess = _req.Session()
+                _sess.trust_env = False  # 完全忽略 HTTP(S)_PROXY 环境变量
+                resp = _sess.get(url, timeout=15, headers={
+                    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+                    "Referer": "https://www.bilibili.com/"})
+                resp.raise_for_status()
+                data_bytes = resp.content
+                ctype = resp.headers.get("Content-Type") or "image/jpeg"
+                self.send_response(200)
+                self.send_header("Content-Type", ctype)
+                self.send_header("Content-Length", str(len(data_bytes)))
+                self.send_header("Cache-Control", "public, max-age=3600")
+                self.end_headers()
+                self.wfile.write(data_bytes)
+            except Exception as e:
+                print(f"[thumb] 下载失败 {url[:60]}: {type(e).__name__}: {str(e)[:120]}", flush=True)
+                return self._json({"ok": False, "msg": f"缩略图下载失败: {type(e).__name__}: {str(e)[:80]}"}, 502)
+
         elif u.path == "/api/voices":
             """列出可用中文声线。?engine=doubao 返回豆包音色；否则返回 edge-tts 声线"""
             q = urlparse(self.path).query
