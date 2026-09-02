@@ -41,6 +41,10 @@ def _get_buvid_cookie() -> str:
         r2 = subprocess.run(
             ["curl", "-s", "--max-time", "8",
              "--resolve", f"www.bilibili.com:443:{ips[0]}",
+             "-H", "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                   "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+             "-H", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+             "-H", "Accept-Language: zh-CN,zh;q=0.9",
              "-D", "-", "-o", "/dev/null", "https://www.bilibili.com/"],
             capture_output=True, text=True, timeout=15)
         m = re.search(r"[Ss]et-[Cc]ookie: (buvid3=[^;]+)", r2.stdout)
