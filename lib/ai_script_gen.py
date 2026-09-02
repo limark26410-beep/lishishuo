@@ -84,9 +84,41 @@ _STYLE_HINTS = {
     "suspense": "说书人式 · 悬念迭起",
 }
 
+# GL-20260901：平台适配（工作台爆款文案用）——追加进 system prompt
+_PLATFORM_INSTRUCTIONS = {
+    "douyin": (
+        "【目标平台：抖音】\n"
+        "- 前 3 秒必须有强钩子（冲突/悬念/反常识），黄金三秒定生死\n"
+        "- 节奏快：短句为主，每 5-8 秒一个信息点或情绪点\n"
+        "- 口语化强，像朋友快速跟你讲一件惊掉下巴的事\n"
+        "- 结尾留互动钩子（'你怎么看？''评论区告诉我'）\n"
+        "- 题材偏大众化，避免过于艰深"),
+    "bilibili": (
+        "【目标平台：B站】\n"
+        "- 可以适度深入，观众接受度较高，讲透一个点比讲泛三个点好\n"
+        "- 开头可稍铺垫（前 10 秒给一个'接下来要讲什么'的预期），但也要有钩子\n"
+        "- 适当引用史料细节/数字，显得扎实，B站观众看重考据\n"
+        "- 结尾可以抛一个值得讨论的开放问题（弹幕互动）\n"
+        "- 语气介于专业与亲切之间，不端着但也不浮夸"),
+    "xiaohongshu": (
+        "【目标平台：小红书】\n"
+        "- 共鸣优先：开头戳一个普遍情绪或痛点（'你有没有想过……'）\n"
+        "- 故事感强：从一个具体的小场景/小人物切入，娓娓道来\n"
+        "- 金句化：每隔几句有一个可截图传播的句子\n"
+        "- 收尾温暖或留有回味，适合点赞收藏\n"
+        "- 篇幅可稍短，重点在'好看+好记'"),
+}
+
+_PLATFORM_HINTS = {
+    "douyin": "抖音 · 快节奏强钩子",
+    "bilibili": "B站 · 深度考据",
+    "xiaohongshu": "小红书 · 共鸣故事",
+}
+
 
 def _build_messages(instruction, duration_min, image_count, series_name,
-                    style_anchor, ctype="故事", persona_extra="", wstyle=""):
+                    style_anchor, ctype="故事", persona_extra="", wstyle="",
+                    platform=""):
     """构造 system + user 消息。ctype: 商品/故事/营销（创作类型）"""
     anchor_line = ""
     if style_anchor:
@@ -94,6 +126,8 @@ def _build_messages(instruction, duration_min, image_count, series_name,
     type_inst = _TYPE_INSTRUCTIONS.get(ctype) or _TYPE_INSTRUCTIONS["故事"]
     wstyle_inst = _WSTYLE_INSTRUCTIONS.get(wstyle or "")
     wstyle_line = (wstyle_inst + "\n") if wstyle_inst else ""
+    platform_inst = _PLATFORM_INSTRUCTIONS.get(platform or "")
+    platform_line = (platform_inst + "\n") if platform_inst else ""
     system = f"""你是一位专业的文史类短视频文案创作者，专为抖音/视频号平台撰写口播稿。
 
 你的文案风格：口语化、有故事感、有感染力、三秒钩子抓住观众。像一位纪录片导演在镜头前娓娓道来，而不是在念百科条目。
@@ -109,6 +143,7 @@ def _build_messages(instruction, duration_min, image_count, series_name,
 {anchor_line}
 {type_inst}
 {wstyle_line}
+{platform_line}
 {persona_extra}
 8. fetch_keywords：给出 2-3 个用于搜索视频素材画面的关键词（YouTube/B站搜索用），
    中英结合（英文命中率高），要能反映稿子的核心画面主题（人物/战争/城市/器物等），
@@ -118,6 +153,7 @@ def _build_messages(instruction, duration_min, image_count, series_name,
 
 {{
  "episode_title": "用作片头主标题的短句，用·分隔主副标题，如'李白·诗仙传奇'",
+ "title_variants": ["标题变体1（平台爆款向）", "标题变体2", "标题变体3"],
  "hook": "开头钩子，1-2句",
  "script_body": "正文全部内容，自然段落分行，含收尾",
  "image_prompts": ["提示词1", "提示词2", ...],
@@ -178,7 +214,7 @@ def _extract_json(text):
 
 def generate_script(instruction, duration_min=3, api_key="",
                     series_name="上下五千年", style_anchor="", ctype="故事",
-                    base_dir="", style_enabled=True, wstyle=""):
+                    base_dir="", style_enabled=True, wstyle="", platform=""):
     """
     调用 qwen-max 生成稿件。
 
@@ -192,6 +228,7 @@ def generate_script(instruction, duration_min=3, api_key="",
         base_dir: 项目根目录（找 persona.json；空则不注入风格）
         style_enabled: 是否启用个人风格模仿（GL-20260901）
         wstyle: 文风预设（yuqiuyu/storyteller/suspense；空=默认，GL-20260901）
+        platform: 目标平台（douyin/bilibili/xiaohongshu；空=通用，GL-20260901）
 
     返回:
         {
@@ -229,7 +266,7 @@ def generate_script(instruction, duration_min=3, api_key="",
 
     system, user = _build_messages(
         instruction, duration_min, image_count, series_name, style_anchor, ctype,
-        persona_extra=persona_extra, wstyle=wstyle)
+        persona_extra=persona_extra, wstyle=wstyle, platform=platform)
     content = _call_qwen(system, user, api_key)
     data = _extract_json(content)
 
@@ -248,9 +285,13 @@ def generate_script(instruction, duration_min=3, api_key="",
 
     series = (data.get("series_name") or series_name or "上下五千年").strip()
     ep_name = (data.get("episode_name") or "").strip()
+    title_variants = data.get("title_variants") or []
+    if not isinstance(title_variants, list):
+        title_variants = []
 
     return {
         "title": title,
+        "title_variants": [str(t).strip() for t in title_variants if str(t).strip()][:5],
         "hook": hook,
         "script_body": body,
         "full_script": full_script,

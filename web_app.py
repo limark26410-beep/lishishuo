@@ -923,6 +923,91 @@ class Handler(BaseHTTPRequestHandler):
                 "style_used": bool(result.get("style_used")),  # GL-20260901
             })
 
+        if u.path == "/api/workbench-generate":
+            """GL-20260901：工作台爆款文案生成（平台适配 + 标题变体 + 稿子，建期号写文件）"""
+            if TASK["running"]:
+                return self._json({"ok": False, "msg": "已有任务在跑，请先等它完成"})
+            instruction = (data.get("instruction") or "").strip()
+            if not instruction:
+                return self._json({"ok": False, "msg": "请先输入你想做的内容"})
+            try:
+                duration_min = max(1, min(30, int(data.get("duration_min") or 3)))
+            except (TypeError, ValueError):
+                duration_min = 3
+            platform = (data.get("platform") or "").strip() or "douyin"
+            wstyle = (data.get("wstyle") or "").strip() or ""
+            ctype = (data.get("ctype") or "").strip() or "故事"
+            api_key = _get_env_key("DEEPSEEK_API_KEY")
+            if not api_key:
+                return self._json({"ok": False,
+                                   "msg": "未配置 DEEPSEEK_API_KEY，请到高级设置里填写"})
+            cfg = load_cfg()
+            style_enabled = bool(cfg.get("ai_script", {}).get("style_enabled", True))
+            try:
+                result = generate_script(
+                    instruction, duration_min, api_key,
+                    series_name=cfg.get("title_card", {}).get("series_name", "上下五千年"),
+                    style_anchor=cfg.get("image", {}).get("style_anchor", ""),
+                    ctype=ctype,
+                    base_dir=str(BASE_DIR),
+                    style_enabled=style_enabled,
+                    wstyle=wstyle,
+                    platform=platform,
+                )
+            except AIScriptError as e:
+                return self._json({"ok": False, "msg": str(e)})
+            episode_id = next_episode_id()
+            ep_dir = BASE_DIR / "episodes" / episode_id
+            ep_dir.mkdir(parents=True, exist_ok=True)
+            (ep_dir / "script.txt").write_text(result["full_script"], encoding="utf-8")
+            try:
+                (ep_dir / "script_ai_draft.txt").write_text(
+                    result["full_script"], encoding="utf-8")
+            except Exception:
+                pass
+            prompts = [{"id": "auto_01", "title": "AI 生成",
+                        "prompts": result["image_prompts"]}]
+            (ep_dir / "prompts.json").write_text(
+                json.dumps(prompts, ensure_ascii=False, indent=2), encoding="utf-8")
+            log(f"✓ 工作台出稿：期号 {episode_id}（{platform}·{ctype}·{wstyle or '默认文风'}），"
+                f"{result['char_count']} 字")
+            return self._json({
+                "ok": True,
+                "episode_id": episode_id,
+                "episode_dir": str(ep_dir),
+                "script_path": str(ep_dir / "script.txt"),
+                "title": result["title"],
+                "title_variants": result.get("title_variants", []),
+                "hook": result["hook"],
+                "script_preview": result["full_script"],
+                "char_count": result["char_count"],
+                "image_count": len(result["image_prompts"]),
+                "series_name": result["series_name"],
+                "episode_name": result["episode_name"],
+                "fetch_keywords": result.get("fetch_keywords", ""),
+            })
+
+        if u.path == "/api/workbench-start":
+            """GL-20260901：工作台确认出片（稿子/prompts 已就位，直接跑流水线）"""
+            if TASK["running"]:
+                return self._json({"ok": False, "msg": "已有任务在跑"})
+            episode = (data.get("episode") or "").strip()
+            ep_dir = BASE_DIR / "episodes" / episode
+            if not episode or not (ep_dir / "script.txt").exists():
+                return self._json({"ok": False, "msg": "期号不存在或缺少 script.txt，请先生成文案"})
+            params = {
+                "episode": episode,
+                "ai_mode": True,
+                "canvas": data.get("canvas") or "dual",
+                "style": data.get("style") or "",
+                "name": data.get("name") or "",
+                "title": data.get("title") or "",
+                "series": data.get("series") or "",
+                "also_nosub": bool(data.get("also_nosub")),
+            }
+            threading.Thread(target=run_pipeline, args=(params,), daemon=True).start()
+            return self._json({"ok": True})
+
         if u.path == "/api/save-script":
             """GL-20260901：网页内直接修改 AI 稿子 → 写回 script.txt（保留初稿快照供风格学习）"""
             episode = (data.get("episode") or "").strip()

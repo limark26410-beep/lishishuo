@@ -93,6 +93,10 @@
       style="flex:1; padding:10px; border:none; background:transparent; color:#a89e8c; cursor:pointer; font-size:14px;">
       🤖 AI 智能出稿
     </button>
+    <button id="modeWB" onclick="switchMode('workbench')"
+      style="flex:1; padding:10px; border:none; background:transparent; color:#a89e8c; cursor:pointer; font-size:14px;">
+      🎛 工作台
+    </button>
   </div>
 
   <div class="card" id="manualCard">
@@ -436,6 +440,71 @@
     <div id="logs"></div>
     <div style="margin-top:14px" id="doneBox"></div>
   </div>
+
+  <!-- 🎛 工作台（GL-20260901：爆款文案 → 一键出片） -->
+  <div class="card" id="wbCard" style="display:none;">
+    <div class="step">① 写什么</div>
+    <div class="row">
+      <label>选题 / 想法</label>
+      <input type="text" id="wb_topic" placeholder="例：李白、敦煌莫高窟、朱元璋、王阳明……" style="flex:1">
+    </div>
+    <div class="flex" style="gap:10px; align-items:center;">
+      <label style="margin:0;">平台：</label>
+      <select id="wb_platform" style="flex:1;">
+        <option value="douyin">抖音 · 快节奏强钩子</option>
+        <option value="bilibili">B站 · 深度考据</option>
+        <option value="xiaohongshu">小红书 · 共鸣故事</option>
+      </select>
+    </div>
+    <div class="flex" style="gap:10px; align-items:center; margin-top:8px;">
+      <label style="margin:0;">时长：</label>
+      <select id="wb_duration" style="flex:1;">
+        <option value="1">1 分钟（约250字）</option>
+        <option value="3" selected>3 分钟（约750字，推荐）</option>
+        <option value="5">5 分钟（约1250字）</option>
+      </select>
+    </div>
+    <div class="flex" style="gap:10px; align-items:center; margin-top:8px;">
+      <label style="margin:0;">文风：</label>
+      <select id="wb_wstyle" style="flex:1;">
+        <option value="">默认（口语化·有故事感）</option>
+        <option value="yuqiuyu">余秋雨式 · 文化散文</option>
+        <option value="storyteller">讲书人式 · 娓娓道来</option>
+        <option value="suspense">说书人式 · 悬念迭起</option>
+      </select>
+    </div>
+    <div class="flex" style="gap:10px; align-items:center; margin-top:8px;">
+      <label style="margin:0;">画幅：</label>
+      <select id="wb_canvas" style="flex:1;">
+        <option value="dual" selected>竖屏 + 横屏（双画幅）</option>
+        <option value="portrait">仅竖屏（抖音）</option>
+        <option value="landscape">仅横屏（B站）</option>
+      </select>
+    </div>
+    <div style="margin-top:14px;">
+      <button id="wbGenBtn" onclick="wbGenerate()">🚀 生成爆款文案</button>
+      <span id="wbHint" class="hint" style="margin-left:10px;"></span>
+    </div>
+
+    <!-- 文案预览（生成后显示，可编辑） -->
+    <div id="wbPreview" style="display:none; margin-top:16px; padding:14px; background:#0f0c08; border:1px solid #342d24; border-radius:8px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+        <div class="step" id="wbPreviewTitle"></div>
+        <div class="hint" id="wbPreviewMeta"></div>
+      </div>
+      <div id="wbVariants" class="hint" style="margin-top:8px;"></div>
+      <textarea id="wbPreviewText" rows="14" spellcheck="false"
+        style="margin-top:10px; width:100%; padding:10px; background:#100d09; border:1px solid #342d24;
+        border-radius:6px; color:#e8e4dc; font-size:13px; line-height:1.8; resize:vertical;
+        font-family:inherit; white-space:pre-wrap;"></textarea>
+      <div style="margin-top:12px; display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+        <button class="ghost" onclick="wbSave()">💾 保存修改</button>
+        <button onclick="wbStart()">🎬 一键出片</button>
+        <button class="ghost" onclick="wbGenerate()">🔄 重新生成</button>
+        <span class="hint" id="wbEditHint"></span>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -741,20 +810,29 @@ async function saveAdv(){
 let isAiMode = false; // AI 生成的稿子回填后，走 ai_mode 流水线
 
 function switchMode(mode){
+  // GL-20260901：工作台模式
+  const setBtn = (id, on) => {
+    $(id).style.background = on ? '#d4af37' : 'transparent';
+    $(id).style.color = on ? '#14100c' : '#a89e8c';
+  };
   if(mode === 'ai'){
-    $('modeAI').style.background = '#d4af37';
-    $('modeAI').style.color = '#14100c';
-    $('modeManual').style.background = 'transparent';
-    $('modeManual').style.color = '#a89e8c';
+    setBtn('modeAI', true); setBtn('modeManual', false); setBtn('modeWB', false);
+    $('modeAI').style.fontWeight = '600'; $('modeManual').style.fontWeight = '400'; $('modeWB').style.fontWeight = '400';
     $('manualCard').style.display = 'none';
     $('aiCard').style.display = 'block';
+    $('wbCard').style.display = 'none';
+  } else if(mode === 'workbench'){
+    setBtn('modeWB', true); setBtn('modeManual', false); setBtn('modeAI', false);
+    $('modeWB').style.fontWeight = '600'; $('modeManual').style.fontWeight = '400'; $('modeAI').style.fontWeight = '400';
+    $('manualCard').style.display = 'none';
+    $('aiCard').style.display = 'none';
+    $('wbCard').style.display = 'block';
   } else {
-    $('modeManual').style.background = '#d4af37';
-    $('modeManual').style.color = '#14100c';
-    $('modeAI').style.background = 'transparent';
-    $('modeAI').style.color = '#a89e8c';
+    setBtn('modeManual', true); setBtn('modeAI', false); setBtn('modeWB', false);
+    $('modeManual').style.fontWeight = '600'; $('modeAI').style.fontWeight = '400'; $('modeWB').style.fontWeight = '400';
     $('manualCard').style.display = 'block';
     $('aiCard').style.display = 'none';
+    $('wbCard').style.display = 'none';
   }
 }
 
@@ -801,6 +879,76 @@ async function aiGenerate(){
 
 async function aiRegenerate(){
   await aiGenerate();
+}
+
+// ── GL-20260901：工作台（爆款文案 → 一键出片）──
+async function wbGenerate(){
+  const topic = $('wb_topic').value.trim();
+  if(!topic){ $('wbHint').textContent = '请先输入选题/想法'; return; }
+  $('wbGenBtn').disabled = true;
+  $('wbHint').textContent = '正在生成爆款文案（平台适配中）…';
+  $('wbPreview').style.display = 'none';
+  try {
+    const r = await post('/api/workbench-generate', {
+      instruction: topic,
+      duration_min: parseInt($('wb_duration').value),
+      platform: $('wb_platform').value,
+      wstyle: $('wb_wstyle').value,
+    });
+    if(!r.ok){ $('wbHint').textContent = '❌ ' + r.msg; return; }
+    window._wbData = {
+      episode_id: r.episode_id, episode_dir: r.episode_dir,
+      script_path: r.script_path, title: r.title || '',
+      episode_name: r.episode_name || '', series_name: r.series_name || '',
+      fetch_keywords: r.fetch_keywords || '',
+    };
+    $('wbPreviewTitle').textContent = r.title || '文案生成完毕';
+    $('wbPreviewMeta').textContent = `${r.char_count} 字 · ${r.image_count} 张图 · 期号 ${r.episode_id}`;
+    // 标题变体展示
+    const vs = r.title_variants || [];
+    $('wbVariants').innerHTML = vs.length
+      ? '🔥 爆款标题候选：<br>' + vs.map((t,i)=>`${i+1}. ${t}`).join('<br>')
+      : '';
+    $('wbPreviewText').value = r.script_preview;
+    window._wbSaved = true;
+    $('wbPreviewText').oninput = function(){ window._wbSaved = false; };
+    $('wbPreview').style.display = 'block';
+    $('wbHint').textContent = '✅ 可编辑后直接一键出片';
+  } catch(e){
+    $('wbHint').textContent = '❌ 网络错误，请重试';
+  } finally {
+    $('wbGenBtn').disabled = false;
+  }
+}
+
+async function wbSave(){
+  const d = window._wbData;
+  if(!d){ alert('请先生成文案'); return; }
+  const script = $('wbPreviewText').value.trim();
+  if(!script){ alert('文案内容为空'); return; }
+  const r = await post('/api/save-script', {episode: d.episode_id, script});
+  $('wbEditHint').textContent = r.ok ? ('✓ ' + (r.msg||'已保存')) : ('✗ ' + (r.msg||'保存失败'));
+  if(r.ok) window._wbSaved = true;
+}
+
+async function wbStart(){
+  const d = window._wbData;
+  if(!d){ alert('请先生成文案'); return; }
+  if(!window._wbSaved){
+    if(!confirm('文案有未保存的修改，是否先保存再出片？')) return;
+    await wbSave();
+  }
+  const r = await post('/api/workbench-start', {
+    episode: d.episode_id,
+    canvas: $('wb_canvas').value,
+    name: d.episode_name, title: d.title, series: d.series_name,
+  });
+  if(!r.ok){ alert(r.msg || '启动失败'); return; }
+  // 切到进度卡显示
+  $('wbCard').style.display = 'none';
+  $('progressCard').style.display = 'block';
+  $('stepText').textContent = '已启动，等待流水线…';
+  poll();
 }
 
 // GL-20260901：网页内直接保存修改后的稿子（写回 script.txt，保留初稿快照供风格学习）
