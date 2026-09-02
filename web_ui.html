@@ -816,31 +816,40 @@ async function renderPexelsPreview(){
   }
   box.innerHTML = '';
   const grid = document.createElement('div');
-  grid.style.cssText = 'display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:6px;';
+  grid.style.cssText = 'display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:6px;';
   r.images.forEach(img => {
     const cell = document.createElement('div');
     cell.style.cssText = 'background:#100d09;border:1px solid #342d24;border-radius:6px;padding:6px;text-align:center;';
     const pic = document.createElement('img');
     pic.src = img.url;
-    pic.style.cssText = 'width:100%;height:80px;object-fit:cover;border-radius:4px;';
+    pic.loading = 'lazy';
+    pic.style.cssText = 'width:100%;height:90px;object-fit:cover;border-radius:4px;background:#0b0906;display:block;';
     const label = document.createElement('div');
     label.className = 'hint';
     label.style.cssText = 'font-size:11px;margin:4px 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
     label.textContent = img.name;
     const btn = document.createElement('button');
     btn.className = 'ghost';
-    btn.style.cssText = 'padding:4px 8px;font-size:12px;';
+    btn.style.cssText = 'padding:4px 10px;font-size:12px;';
     btn.textContent = '🔄 换一张';
     btn.onclick = () => replacePexelsImage(episode, img.name, btn);
     cell.appendChild(pic); cell.appendChild(label); cell.appendChild(btn);
     grid.appendChild(cell);
   });
   box.appendChild(grid);
+  // 总数提示
   box.appendChild(Object.assign(document.createElement('div'), {
     className: 'hint',
     style: 'margin-top:8px',
-    textContent: '预览确认后，点「开始制作」出片（用这 ' + r.count + ' 张图）'
+    textContent: '共 ' + r.count + ' 张 · 预览确认后点「开始制作」出片；图加载慢请稍等或点下方「🔄 刷新预览」'
   }));
+  // 刷新预览按钮（图片加载失败时重新拉）
+  const refreshBtn = document.createElement('button');
+  refreshBtn.className = 'ghost';
+  refreshBtn.style.cssText = 'margin-top:8px;';
+  refreshBtn.textContent = '🔄 刷新预览';
+  refreshBtn.onclick = () => renderPexelsPreview();
+  box.appendChild(refreshBtn);
 }
 
 async function replacePexelsImage(episode, name, btn){
