@@ -77,29 +77,77 @@
   }
   .step { color: #d4af37; font-size: 14px; }
   .divider { height: 1px; background: #2e2820; margin: 20px 0; }
+
+  /* ── GL-20260902：左右结构工作台布局 ── */
+  .app-shell { display: flex; min-height: calc(100vh - 48px); gap: 0; }
+  .sidebar {
+    width: 208px; flex: 0 0 208px; background: #0d0b08;
+    border-right: 1px solid #2e2820; padding: 18px 10px 24px;
+    position: sticky; top: 0; height: 100vh; overflow-y: auto;
+    box-sizing: border-box;
+  }
+  .sidebar .logo { color: #d4af37; font-size: 20px; font-weight: 700; letter-spacing: 2px; padding: 2px 10px 14px; }
+  .sidebar .logo small { display: block; color: #6b6352; font-size: 11px; font-weight: 400; letter-spacing: 0; margin-top: 2px; }
+  .side-group { margin: 6px 0 14px; }
+  .side-group .group-title { color: #6b6352; font-size: 11px; letter-spacing: 2px; padding: 0 12px 6px; }
+  .side-item {
+    display: flex; align-items: center; gap: 9px; width: 100%;
+    padding: 10px 12px; margin: 1px 0; border: none; background: transparent;
+    color: #a89e8c; font-size: 14px; font-weight: 400; cursor: pointer;
+    border-radius: 6px; text-align: left; letter-spacing: 0.5px;
+    font-family: inherit;
+  }
+  .side-item:hover { background: #161310; color: #e8e4dc; }
+  .side-item.active { background: #1d1914; color: #d4af37; font-weight: 600; }
+  .side-item .ic { width: 20px; text-align: center; }
+  .main { flex: 1; min-width: 0; padding: 26px 30px 60px; overflow-x: hidden; }
+  .view-panel { display: none; }
+  .view-panel.active { display: block; }
+
+  /* 窄屏回退：<960px 菜单变顶部横向 */
+  @media (max-width: 960px) {
+    .app-shell { flex-direction: column; }
+    .sidebar {
+      width: 100%; flex: none; height: auto; position: static;
+      display: flex; flex-wrap: wrap; gap: 4px; padding: 10px; border-right: none;
+      border-bottom: 1px solid #2e2820; overflow-x: auto;
+    }
+    .sidebar .logo { width: 100%; padding-bottom: 6px; }
+    .side-group { margin: 0 2px; }
+    .side-group .group-title { display: none; }
+    .side-item { width: auto; padding: 7px 12px; white-space: nowrap; }
+    .main { padding: 16px 14px 50px; }
+  }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>历史说 · 出片工具</h1>
-  <div class="sub">稿子进，成片出</div>
+  <div class="app-shell">
 
-  <div style="display:flex; gap:0; margin-bottom:20px; border-radius:8px; overflow:hidden; border:1px solid #342d24;">
-    <button id="modeManual" onclick="switchMode('manual')"
-      style="flex:1; padding:10px; border:none; background:#d4af37; color:#14100c; font-weight:600; cursor:pointer; font-size:14px;">
-      📄 手动模式
-    </button>
-    <button id="modeAI" onclick="switchMode('ai')"
-      style="flex:1; padding:10px; border:none; background:transparent; color:#a89e8c; cursor:pointer; font-size:14px;">
-      🤖 AI 智能出稿
-    </button>
-    <button id="modeWB" onclick="switchMode('workbench')"
-      style="flex:1; padding:10px; border:none; background:transparent; color:#a89e8c; cursor:pointer; font-size:14px;">
-      🎛 工作台
-    </button>
-  </div>
+  <!-- ── 左侧菜单（GL-20260902） ── -->
+  <aside class="sidebar">
+    <div class="logo">历史说<small>视频制作工作台</small></div>
+    <div class="side-group">
+      <div class="group-title">出片</div>
+      <button class="side-item" data-view="manual" onclick="switchView('manual')"><span class="ic">📄</span>手动模式</button>
+      <button class="side-item" data-view="ai" onclick="switchView('ai')"><span class="ic">🤖</span>AI 智能出稿</button>
+      <button class="side-item" data-view="workbench" onclick="switchView('workbench')"><span class="ic">🎛</span>工作台</button>
+    </div>
+    <div class="side-group">
+      <div class="group-title">任务</div>
+      <button class="side-item" data-view="progress" onclick="switchView('progress')"><span class="ic">📊</span>进度与日志</button>
+    </div>
+    <div class="side-group">
+      <div class="group-title">设置</div>
+      <button class="side-item" data-view="settings" onclick="switchView('settings')"><span class="ic">⚙️</span>高级设置</button>
+      <button class="side-item" data-view="dropbox" onclick="switchView('dropbox')"><span class="ic">📥</span>投递目录</button>
+    </div>
+  </aside>
 
-  <div class="card" id="manualCard">
+  <!-- ── 右侧内容区 ── -->
+  <main class="main">
+
+  <div class="card view-panel" id="manualPanel">
     <div class="row">
       <label>期号</label>
       <input type="text" id="episode" placeholder="选稿子后自动填" oninput="this.dataset.touched=1">
@@ -270,100 +318,14 @@
       <div class="hint">历史素材库归档根目录，成片/图片/录音/稿子/字幕分类存这里；视频混剪用的视频素材库在「图片来源 → 视频素材库」设置</div>
     </div>
 
-    <!-- GL-20260814-04：投递目录自动出片（GL-20260817-01：暂隐藏，待外部流程融合测试通过再放出） -->
-    <div class="row" style="display:none">
-      <label>投递目录</label>
-      <div class="flex">
-        <label style="display:flex;align-items:center;gap:6px;margin-right:8px">
-          <input type="checkbox" id="db_enabled"> 开启自动出片
-        </label>
-        <input type="text" id="db_watch" value="~/历史说素材/投递" style="flex:1" placeholder="投递目录">
-        <input type="text" id="db_out" value="~/历史说素材/成片" style="flex:1;margin-left:6px" placeholder="成片输出目录">
-        <button class="ghost" onclick="saveDropbox()" style="margin-left:8px">保存</button>
-      </div>
-      <div class="hint">外部工具把稿子丢进投递目录（一级子目录名=题材，如 历史/李白.txt），自动出片到成片目录；处理中/成功/失败分别进 _processing/_done/_failed</div>
-      <div id="dbRecent" style="margin-top:8px"></div>
-    </div>
-
-    <details>
-      <summary>⚙ 高级设置(一般不用改)</summary>
-      <div style="margin-top:14px;padding:14px;background:#100d09;border:1px solid #342d24;border-radius:6px">
-        <label>阿里云 API Key（生图用）</label>
-        <div class="flex">
-          <input type="password" id="a_key" placeholder="粘贴新密钥以更换">
-          <button class="ghost" onclick="saveKey()">保存密钥</button>
-        </div>
-        <div class="hint" id="keyStatus">检查中…</div>
-      </div>
-
-      <div style="margin-top:12px;padding:14px;background:#100d09;border:1px solid #342d24;border-radius:6px">
-        <label>🧠 DeepSeek 密钥（AI 写稿）</label>
-        <div class="flex">
-          <input type="password" id="a_ds_key" placeholder="sk-... DeepSeek 写稿用">
-          <button class="ghost" onclick="saveDeepSeekKey()">保存</button>
-        </div>
-        <div class="hint" id="dsKeyStatus">AI 出稿用 DeepSeek，生图仍用阿里云 key，两个都要填</div>
-      </div>
-
-      <div class="adv">
-        <div><label>片头时长(秒)</label><input type="number" id="a_dur" value="3"></div>
-        <div><label>字幕底边距(px)</label><input type="number" id="a_margin" value="400"></div>
-        <div><label>字幕字号</label><input type="number" id="a_font" value="60"></div>
-        <div><label>编码质量 CRF</label><input type="number" id="a_crf" value="26"></div>
-        <div><label>TTS 引擎</label>
-          <select id="a_engine" onchange="switchEngine()">
-            <option value="edge">微软 edge（免费 · 稳定）</option>
-            <option value="doubao">豆包语音（更自然 · 需 API Key）</option>
-          </select>
-          <div class="hint" style="display:block;margin-top:2px">豆包音质更自然、字幕逐字对齐；需先在控制台开通并填 DOUBAO_TTS_KEY（.env）；失败自动回退微软</div>
-        </div>
-        <div><label>TTS 声线</label>
-          <select id="a_voice"><option value="zh-CN-YunjianNeural">云健 · 男声 · 沉稳解说（当前）</option></select>
-        </div>
-        <div><label>TTS 语速</label><input type="text" id="a_rate" value="-4%" placeholder="如 +28% 加速 / -4% 减速" oninput="this.dataset.touched=1"><div class="hint" style="display:block;margin-top:2px">须带正负号：+28% 加速、-4% 减速；2 倍速写 +100%；手动改过则优先于风格预设（GL-20260818 D3）</div></div>
-        <div><label>生图模型</label>
-          <select id="a_model">
-            <optgroup label="通义万相">
-              <option value="wanx-v1">wanx-v1（老版，免费额度多）</option>
-              <option value="wanx2.0-t2i-turbo">wanx2.0-t2i-turbo</option>
-              <option value="wanx2.1-t2i-turbo">wanx2.1-t2i-turbo（前15期用的）</option>
-              <option value="wanx2.1-t2i-plus">wanx2.1-t2i-plus（画质更好）</option>
-              <option value="wanx2.2-t2i-flash">wanx2.2-t2i-flash（快）</option>
-              <option value="wanx2.2-t2i-plus">wanx2.2-t2i-plus（新版最好）</option>
-            </optgroup>
-          </select>
-          <div class="hint" style="margin-top:4px">额度用完会报 403，去阿里云百炼看余量</div>
-        </div>
-        <div><label>生图尺寸</label>
-          <select id="a_size">
-            <option value="1024*1024">1024*1024（1:1，兼容性最好）</option>
-            <option value="1080*1440">1080*1440（3:4）</option>
-            <option value="768*1344">768*1344（9:16）</option>
-            <option value="720*1280">720*1280（9:16 小）</option>
-          </select>
-        </div>
-        <div><label>AI 稿模仿我的风格</label>
-          <select id="a_style_enabled">
-            <option value="1">开（从你的每次改稿中学习，越写越像你）</option>
-            <option value="0">关（通用模板风格）</option>
-          </select>
-          <div class="hint" style="display:block;margin-top:2px">AI 出稿 → 你改稿 → 工具对比初稿/终稿提炼你的改法，下次出稿自动模仿（GL-20260901）</div>
-          <button type="button" class="ghost" style="margin-top:4px" onclick="viewPersona()">查看风格画像</button>
-          <button type="button" class="ghost" style="margin-top:4px" onclick="resetPersona()">清空重学</button>
-          <div id="personaBox" class="hint" style="display:none;margin-top:6px;white-space:pre-wrap;background:rgba(255,255,255,.05);padding:8px;border-radius:6px"></div>
-        </div>
-      </div>
-      <div style="margin-top:12px"><button class="ghost" onclick="saveAdv()">保存设置</button>
-        <span id="advMsg" class="hint" style="margin-left:10px"></span></div>
-    </details>
-
     <div class="divider"></div>
     <button id="startBtn" onclick="start()">开始制作</button>
     <button id="stopBtn" onclick="stopTask()" style="display:none;background:#c0392b;color:#fff;margin-left:10px">停止</button>
   </div>
+  </div><!-- /manualPanel -->
 
   <!-- 🤖 AI 智能出稿（默认隐藏） -->
-  <div class="card" id="aiCard" style="display:none;">
+  <div class="card view-panel" id="aiPanel">
     <div class="row">
       <label>你想做什么内容？</label>
       <textarea id="aiInstruction" rows="3"
@@ -433,8 +395,9 @@
       </div>
     </div>
   </div>
+  </div><!-- /aiPanel -->
 
-  <div class="card" id="progressCard" style="display:none">
+  <div class="card view-panel" id="progressPanel">
     <div class="step" id="stepText">准备中…</div>
     <div class="bar-bg"><div class="bar" id="bar"></div></div>
     <div id="logs"></div>
@@ -442,7 +405,7 @@
   </div>
 
   <!-- 🎛 工作台（GL-20260901：爆款文案 → 一键出片） -->
-  <div class="card" id="wbCard" style="display:none;">
+  <div class="card view-panel" id="workbenchPanel">
     <div class="step">① 写什么</div>
     <div class="row">
       <label>选题 / 想法</label>
@@ -505,10 +468,123 @@
       </div>
     </div>
   </div>
+  </div><!-- /workbenchPanel -->
+
+  <!-- ⚙️ 高级设置（GL-20260902：从折叠提为独立面板） -->
+  <div class="card view-panel" id="settingsPanel">
+    <div class="row">
+      <label>阿里云 API Key（生图用）</label>
+      <input type="password" id="a_key" placeholder="sk-…（留空则不改）" style="flex:1">
+      <button class="ghost" onclick="saveKey()">保存</button>
+    </div>
+    <div class="hint" id="keyStatus">检查中…</div>
+    <div class="row" style="margin-top:10px">
+      <label>🧠 DeepSeek 密钥（AI 写稿）</label>
+      <input type="password" id="a_ds_key" placeholder="sk-…（留空则不改）" style="flex:1">
+      <button class="ghost" onclick="saveDeepSeekKey()">保存</button>
+    </div>
+    <div class="hint" id="dsKeyStatus">检查中…</div>
+    <div class="adv" style="margin-top:16px">
+      <div><label>片头时长(秒)</label><input type="number" id="a_dur" value="3"></div>
+      <div><label>字幕底边距(px)</label><input type="number" id="a_margin" value="400"></div>
+      <div><label>字幕字号</label><input type="number" id="a_font" value="60"></div>
+      <div><label>编码质量 CRF</label><input type="number" id="a_crf" value="26"></div>
+      <div><label>TTS 引擎</label>
+        <select id="a_engine" onchange="switchEngine()">
+          <option value="edge">微软 edge（免费 · 稳定）</option>
+          <option value="doubao">豆包语音（更自然 · 需 API Key）</option>
+        </select>
+        <div class="hint" style="display:block;margin-top:2px">豆包音质更自然、字幕逐字对齐；需先开通并填 DOUBAO_TTS_KEY（.env）；失败自动回退微软</div>
+      </div>
+      <div><label>TTS 声线</label>
+        <select id="a_voice"><option value="zh-CN-YunjianNeural">云健 · 男声 · 沉稳解说（当前）</option></select>
+      </div>
+      <div><label>TTS 语速</label><input type="text" id="a_rate" value="-4%" placeholder="如 +28% 加速 / -4% 减速" oninput="this.dataset.touched=1"><div class="hint" style="display:block;margin-top:2px">须带正负号：+28% 加速、-4% 减速；2 倍速写 +100%；手动改过则优先于风格预设</div></div>
+      <div><label>生图模型</label>
+        <select id="a_model">
+          <optgroup label="通义万相">
+            <option value="wanx-v1">wanx-v1（老版，免费额度多）</option>
+            <option value="wanx2.0-t2i-turbo">wanx2.0-t2i-turbo</option>
+            <option value="wanx2.1-t2i-turbo">wanx2.1-t2i-turbo</option>
+            <option value="wanx2.1-t2i-plus">wanx2.1-t2i-plus（画质更好）</option>
+            <option value="wanx2.2-t2i-flash">wanx2.2-t2i-flash（快）</option>
+            <option value="wanx2.2-t2i-plus">wanx2.2-t2i-plus（新版最好）</option>
+          </optgroup>
+        </select>
+        <div class="hint" style="margin-top:4px">额度用完会报 403，去阿里云百炼看余量</div>
+      </div>
+      <div><label>生图尺寸</label>
+        <select id="a_size">
+          <option value="1024*1024">1024*1024（1:1，兼容性最好）</option>
+          <option value="1080*1440">1080*1440（3:4）</option>
+          <option value="768*1344">768*1344（9:16）</option>
+          <option value="720*1280">720*1280（9:16 小）</option>
+        </select>
+      </div>
+      <div><label>AI 稿模仿我的风格</label>
+        <select id="a_style_enabled">
+          <option value="1">开（从你的每次改稿中学习，越写越像你）</option>
+          <option value="0">关（通用模板风格）</option>
+        </select>
+        <div class="hint" style="display:block;margin-top:2px">AI 出稿 → 你改稿 → 工具对比提炼你的改法，下次自动模仿</div>
+        <button type="button" class="ghost" style="margin-top:4px" onclick="viewPersona()">查看风格画像</button>
+        <button type="button" class="ghost" style="margin-top:4px" onclick="resetPersona()">清空重学</button>
+        <div id="personaBox" class="hint" style="display:none;margin-top:6px;white-space:pre-wrap;background:rgba(255,255,255,.05);padding:8px;border-radius:6px"></div>
+      </div>
+    </div>
+    <div style="margin-top:12px"><button class="ghost" onclick="saveAdv()">保存设置</button>
+      <span id="advMsg" class="hint" style="margin-left:10px"></span></div>
+  </div>
+
+  <!-- 📥 投递目录 -->
+  <div class="card view-panel" id="dropboxPanel">
+    <div class="row">
+      <label>投递目录</label>
+      <label style="margin-left:10px; display:flex; align-items:center; gap:5px;">
+        <input type="checkbox" id="db_enabled"> 开启自动出片
+      </label>
+    </div>
+    <div class="flex" style="margin-top:8px;">
+      <input type="text" id="db_watch" value="~/历史说素材/投递" style="flex:1" placeholder="投递目录">
+      <input type="text" id="db_out" value="~/历史说素材/成片" style="flex:1;margin-left:10px" placeholder="成片输出目录">
+    </div>
+    <div style="margin-top:10px">
+      <button class="ghost" onclick="saveDropbox()">保存投递设置</button>
+      <span id="dbMsg" class="hint" style="margin-left:10px"></span>
+    </div>
+    <div class="hint" style="margin-top:10px">外部工具把稿子丢进投递目录（一级子目录名=题材，如 历史/李白.txt），自动出片到成片目录；处理中/成功/失败分别进 _processing/_done/_failed</div>
+    <div id="dbRecent" style="margin-top:12px"></div>
+  </div>
+
+  </main>
+  </div><!-- /app-shell -->
 </div>
 
 <script>
 function $(id){ return document.getElementById(id); }
+
+// GL-20260902：左右结构——左侧菜单切换右侧面板
+const _VIEWS = {
+  manual:    'manualPanel',
+  ai:        'aiPanel',
+  workbench: 'workbenchPanel',
+  progress:  'progressPanel',
+  settings:  'settingsPanel',
+  dropbox:   'dropboxPanel',
+};
+function switchView(name){
+  Object.entries(_VIEWS).forEach(([k, panelId]) => {
+    const panel = $(panelId);
+    if(panel) panel.classList.toggle('active', k === name);
+    const item = document.querySelector(`.side-item[data-view="${k}"]`);
+    if(item) item.classList.toggle('active', k === name);
+  });
+}
+// 兼容旧 switchMode 调用（保留：AI 出稿后的切换等场景）
+function switchMode(mode){
+  const map = {manual:'manual', ai:'ai', workbench:'workbench'};
+  if(mode in map) switchView(map[mode]);
+}
 
 async function loadCfg(){
   try{
@@ -575,7 +651,7 @@ async function resetPersona(){
     $('personaBox').style.display = 'none';
   }catch(e){ alert('清空失败：' + e.message); }
 }
-window.addEventListener('load', async ()=>{ await loadVoices(); await loadCfg(); loadKeyStatus(); await loadVideoTopics(); loadDropbox(); toggleImg(); }); // GL-20260817-01：初始按默认「自动生图」确保 videoBox 隐藏
+window.addEventListener('load', async ()=>{ switchView('manual'); await loadVoices(); await loadCfg(); loadKeyStatus(); await loadVideoTopics(); loadDropbox(); toggleImg(); }); // GL-20260902：默认进手动模式面板
 
 async function loadDropbox(){
   try{
@@ -809,33 +885,6 @@ async function saveAdv(){
 
 let isAiMode = false; // AI 生成的稿子回填后，走 ai_mode 流水线
 
-function switchMode(mode){
-  // GL-20260901：工作台模式
-  const setBtn = (id, on) => {
-    $(id).style.background = on ? '#d4af37' : 'transparent';
-    $(id).style.color = on ? '#14100c' : '#a89e8c';
-  };
-  if(mode === 'ai'){
-    setBtn('modeAI', true); setBtn('modeManual', false); setBtn('modeWB', false);
-    $('modeAI').style.fontWeight = '600'; $('modeManual').style.fontWeight = '400'; $('modeWB').style.fontWeight = '400';
-    $('manualCard').style.display = 'none';
-    $('aiCard').style.display = 'block';
-    $('wbCard').style.display = 'none';
-  } else if(mode === 'workbench'){
-    setBtn('modeWB', true); setBtn('modeManual', false); setBtn('modeAI', false);
-    $('modeWB').style.fontWeight = '600'; $('modeManual').style.fontWeight = '400'; $('modeAI').style.fontWeight = '400';
-    $('manualCard').style.display = 'none';
-    $('aiCard').style.display = 'none';
-    $('wbCard').style.display = 'block';
-  } else {
-    setBtn('modeManual', true); setBtn('modeAI', false); setBtn('modeWB', false);
-    $('modeManual').style.fontWeight = '600'; $('modeAI').style.fontWeight = '400'; $('modeWB').style.fontWeight = '400';
-    $('manualCard').style.display = 'block';
-    $('aiCard').style.display = 'none';
-    $('wbCard').style.display = 'none';
-  }
-}
-
 async function aiGenerate(){
   const instruction = $('aiInstruction').value.trim();
   const duration = parseInt($('aiDuration').value);
@@ -944,9 +993,8 @@ async function wbStart(){
     name: d.episode_name, title: d.title, series: d.series_name,
   });
   if(!r.ok){ alert(r.msg || '启动失败'); return; }
-  // 切到进度卡显示
-  $('wbCard').style.display = 'none';
-  $('progressCard').style.display = 'block';
+  // 切到进度面板
+  switchView('progress');
   $('stepText').textContent = '已启动，等待流水线…';
   poll();
 }
@@ -1105,7 +1153,7 @@ async function mpStartRender(){
     });
     if(!r.ok){ $('mpHint').textContent = '❌ ' + (r.msg||'启动失败'); $('mpStartBtn').disabled = false; return; }
     $('mpHint').textContent = '✅ 任务已启动，期号 ' + r.task_id + '，请看下方进度';
-    $('progressCard').style.display = 'block';
+    switchView('progress');
     $('startBtn').disabled = true;
     poll();
   }catch(e){
@@ -1165,7 +1213,7 @@ async function start(){
   if(!r.ok){ alert(r.msg); return; }
   $('startBtn').disabled = true;
   $('stopBtn').style.display = 'inline-block';
-  $('progressCard').style.display = 'block';
+  switchView('progress');
   poll();
 }
 
