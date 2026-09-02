@@ -970,7 +970,7 @@ class Handler(BaseHTTPRequestHandler):
                     if not vid or vid in seen:
                         continue
                     seen.add(vid)
-                    dur = e.get("duration") or 0
+                    dur = int(e.get("duration") or 0)
                     out.append({
                         "id": vid,
                         "title": (e.get("title") or "?")[:70],
