@@ -238,8 +238,11 @@
               <option value="12">12 张（约2分钟）</option>
               <option value="16">16 张（约3分钟）</option>
             </select>
+            <button class="ghost" onclick="previewPexels()">👁 试抓图片</button>
           </div>
+          <div class="hint">先「试抓图片」预览，不满意的点图下方「换一张」；确认后再点开始制作</div>
         </div>
+        <div id="pexelsPreview" style="display:none;margin-top:10px"></div>
       </div>
       <!-- GL-20260817-01：视频素材库并进「图片来源」，作为第三个选项显式选择 -->
       <div id="videoBox" style="display:none;margin-top:10px">
@@ -771,9 +774,82 @@ async function suggestFetchKeywords(){
   if(r.ok && r.keywords){
     $('a_fetch_kw').value = r.keywords;
     if(!$('a_fetch_topic').value.trim()) $('a_fetch_topic').value = r.keywords.trim().split(/[\s,，]+/)[0];
+    // GL-20260902：Pexels 关键词也一并预填
+    if($('a_pexels_kw')) $('a_pexels_kw').value = r.keywords.trim().split(/[\s,，]+/)[0];
   } else {
     alert(r.error || '生成失败');
   }
+}
+
+// ── GL-20260902：Pexels 试抓图片 + 预览 + 单张换图 ──
+async function previewPexels(){
+  const kw = ($('a_pexels_kw').value || '').trim();
+  if(!kw){ alert('请先填搜索关键词'); return; }
+  const episode = $('episode').value.trim();
+  if(!episode){ alert('请先填期号（或选稿子自动填）'); return; }
+  const count = parseInt($('a_pexels_count').value) || 8;
+  const btn = event && event.target ? event.target : null;
+  if(btn){ btn.disabled = true; btn.textContent = '下载中…'; }
+  try {
+    // 试抓：先清空旧的 images（避免混入旧图）
+    await post('/api/clear-episode-images', {episode});
+    const r = await post('/api/download-pexels', {episode, keyword: kw, count});
+    if(!r.ok){ alert(r.msg || '下载失败'); return; }
+    window._pexelsEpisode = episode;
+    renderPexelsPreview();
+  } catch(e){
+    alert('试抓失败：' + e.message);
+  } finally {
+    if(btn){ btn.disabled = false; btn.textContent = '👁 试抓图片'; }
+  }
+}
+
+async function renderPexelsPreview(){
+  const episode = window._pexelsEpisode || $('episode').value.trim();
+  const box = $('pexelsPreview');
+  box.style.display = 'block';
+  box.innerHTML = '<div class="hint">加载预览…</div>';
+  const r = await post('/api/episode-images', {episode});
+  if(!r.ok || !r.images || !r.images.length){
+    box.innerHTML = '<div class="hint err">没有图片，请先试抓</div>';
+    return;
+  }
+  box.innerHTML = '';
+  const grid = document.createElement('div');
+  grid.style.cssText = 'display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:6px;';
+  r.images.forEach(img => {
+    const cell = document.createElement('div');
+    cell.style.cssText = 'background:#100d09;border:1px solid #342d24;border-radius:6px;padding:6px;text-align:center;';
+    const pic = document.createElement('img');
+    pic.src = img.url;
+    pic.style.cssText = 'width:100%;height:80px;object-fit:cover;border-radius:4px;';
+    const label = document.createElement('div');
+    label.className = 'hint';
+    label.style.cssText = 'font-size:11px;margin:4px 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+    label.textContent = img.name;
+    const btn = document.createElement('button');
+    btn.className = 'ghost';
+    btn.style.cssText = 'padding:4px 8px;font-size:12px;';
+    btn.textContent = '🔄 换一张';
+    btn.onclick = () => replacePexelsImage(episode, img.name, btn);
+    cell.appendChild(pic); cell.appendChild(label); cell.appendChild(btn);
+    grid.appendChild(cell);
+  });
+  box.appendChild(grid);
+  box.appendChild(Object.assign(document.createElement('div'), {
+    className: 'hint',
+    style: 'margin-top:8px',
+    textContent: '预览确认后，点「开始制作」出片（用这 ' + r.count + ' 张图）'
+  }));
+}
+
+async function replacePexelsImage(episode, name, btn){
+  const kw = prompt('输入新关键词换这张图（英文命中率高）：', ($('a_pexels_kw').value || '').trim());
+  if(!kw) return;
+  btn.disabled = true; btn.textContent = '换图中…';
+  const r = await post('/api/replace-image', {episode, name, keyword: kw});
+  if(!r.ok){ alert(r.msg || '换图失败'); btn.disabled = false; btn.textContent = '🔄 换一张'; return; }
+  renderPexelsPreview();
 }
 
 async function post(url, data){
@@ -1239,6 +1315,7 @@ async function start(){
     if(!kw){ alert('请填 Pexels 搜索关键词（可点「从稿子生成」）'); return; }
     params.fetch_photos = kw;
     params.fetch_photo_count = parseInt($('a_pexels_count').value) || 8;
+    params.photos_ready = !!window._pexelsEpisode;  // 试抓预览过 → 图片已在 images，不再重复下载
   } else if(src === 'video'){
     const root = ($('a_video_root').value || '').trim().replace(/[\\/]+$/, '');
     if(!root){ alert('请先填视频素材库根目录'); return; } // GL-20260817-01 第五节：空根目录守卫，防静默回退图片模式

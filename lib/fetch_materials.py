@@ -161,7 +161,7 @@ def _pexels_search_photos(keyword: str, count: int) -> list:
         raise RuntimeError("未配置 PEXELS_API_KEY（https://www.pexels.com/api/ 免费申请）")
     r = requests.get(
         "https://api.pexels.com/v1/search",
-        params={"query": keyword, "per_page": max(count, 5),
+        params={"query": keyword, "per_page": max(1, count),
                 "orientation": "landscape"},
         headers={"Authorization": key}, timeout=20)
     r.raise_for_status()
@@ -172,13 +172,14 @@ def _pexels_search_photos(keyword: str, count: int) -> list:
         url = src.get("large2x") or src.get("large") or src.get("original")
         if url:
             urls.append(url)
-    return urls
+    return urls[:count]
 
 
 def fetch_pexels_photos(keyword: str, count: int, out_dir: str) -> list:
     """按关键词搜索并下载 Pexels 图片到 out_dir，返回下载文件路径列表。
-    用于「图片来源 → Pexels 素材库」：搜索 → 下载 → 图片模式混剪。"""
-    import tempfile, shutil
+    用于「图片来源 → Pexels 素材库」：搜索 → 下载 → 图片模式混剪。
+    文件名用 时间戳+序号 避免与目录已有图片冲突（换图场景）。"""
+    import tempfile, shutil, time as _t
     key = _pexels_api_key()
     if not key:
         raise RuntimeError("未配置 PEXELS_API_KEY（https://www.pexels.com/api/ 免费申请）")
@@ -187,11 +188,12 @@ def fetch_pexels_photos(keyword: str, count: int, out_dir: str) -> list:
     if not urls:
         raise RuntimeError(f"Pexels 未找到「{keyword}」相关图片")
     downloaded = []
+    stamp = _t.strftime("%Y%m%d%H%M%S")
     for i, url in enumerate(urls, 1):
         ext = os.path.splitext(urlparse(url).path)[1] or ".jpg"
         if ext.lower() not in (".jpg", ".jpeg", ".png", ".webp"):
             ext = ".jpg"
-        out_path = os.path.join(out_dir, f"pexels_{i:02d}{ext}")
+        out_path = os.path.join(out_dir, f"px_{stamp}_{i:02d}{ext}")
         try:
             r = requests.get(url, stream=True, timeout=60)
             r.raise_for_status()

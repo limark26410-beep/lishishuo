@@ -373,12 +373,19 @@ def run_pipeline(params):
             if not kw:
                 raise RuntimeError("Pexels 素材库：请填写搜索关键词")
             count = int(params.get("fetch_photo_count") or 8)
-            try:
-                from lib.fetch_materials import fetch_pexels_photos
-                imgs = fetch_pexels_photos(kw, count, str(ep_dir / "images"))
-                log(f"✓ Pexels 图片素材：{len(imgs)} 张（关键词：{kw}）")
-            except Exception as e:
-                raise RuntimeError(f"Pexels 图片下载失败：{e}")
+            imgs_dir = ep_dir / "images"
+            existing = [f for f in imgs_dir.iterdir() if f.suffix.lower() in
+                        (".jpg", ".jpeg", ".png", ".webp")] if imgs_dir.is_dir() else []
+            if existing and params.get("photos_ready"):
+                # 预览确认过：图片已在，跳过下载直接用
+                log(f"✓ 使用已确认的 {len(existing)} 张图片（Pexels 预览后）")
+            else:
+                try:
+                    from lib.fetch_materials import fetch_pexels_photos
+                    imgs = fetch_pexels_photos(kw, count, str(imgs_dir))
+                    log(f"✓ Pexels 图片素材：{len(imgs)} 张（关键词：{kw}）")
+                except Exception as e:
+                    raise RuntimeError(f"Pexels 图片下载失败：{e}")
             cmd.append("--skip-images")
         elif params.get("images_dir"):
             src = Path(params["images_dir"])
@@ -685,6 +692,27 @@ class Handler(BaseHTTPRequestHandler):
                     "error": TASK["error"], "logs": TASK["logs"][-60:],
                     "result_dir": TASK["result_dir"],
                 })
+        elif u.path.startswith("/api/episode-image"):
+            """GL-20260902：返回期号 images 目录里的单张图片（预览用，GET）"""
+            q = urlparse(self.path).query
+            params = dict(kv.split("=", 1) for kv in q.split("&") if "=" in kv)
+            episode = params.get("episode", "")
+            name = params.get("name", "")
+            if episode and name:
+                fp = BASE_DIR / "episodes" / episode / "images" / os.path.basename(name)
+                if fp.exists():
+                    import mimetypes
+                    data_bytes = fp.read_bytes()
+                    ctype = mimetypes.guess_type(str(fp))[0] or "image/jpeg"
+                    self.send_response(200)
+                    self.send_header("Content-Type", ctype)
+                    self.send_header("Content-Length", str(len(data_bytes)))
+                    self.send_header("Cache-Control", "no-store")
+                    self.end_headers()
+                    self.wfile.write(data_bytes)
+                    return
+            self._json({"ok": False, "msg": "图片不存在"}, 404)
+
         elif u.path == "/api/voices":
             """列出可用中文声线。?engine=doubao 返回豆包音色；否则返回 edge-tts 声线"""
             q = urlparse(self.path).query
@@ -836,6 +864,94 @@ class Handler(BaseHTTPRequestHandler):
             n = len([f for f in os.listdir(d)
                      if f.lower().endswith((".jpg", ".jpeg", ".png", ".webp"))])
             return self._json({"ok": True, "count": n})
+
+        if u.path == "/api/episode-images":
+            """GL-20260902：列出期号 images 目录的图片（预览用）"""
+            episode = (data.get("episode") or "").strip()
+            ep_dir = BASE_DIR / "episodes" / episode
+            imgs_dir = ep_dir / "images"
+            imgs = []
+            if imgs_dir.is_dir():
+                for f in sorted(imgs_dir.iterdir()):
+                    if f.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp"):
+                        imgs.append({"name": f.name,
+                                     "url": f"/api/episode-image?episode={episode}&name={f.name}"})
+            return self._json({"ok": True, "images": imgs, "count": len(imgs)})
+
+        if u.path.startswith("/api/episode-image"):
+            """GL-20260902：返回期号 images 目录里的单张图片（预览用）"""
+            q = urlparse(self.path).query
+            params = dict(kv.split("=", 1) for kv in q.split("&") if "=" in kv)
+            episode = params.get("episode", "")
+            name = params.get("name", "")
+            if not episode or not name:
+                return self._json({"ok": False, "msg": "参数缺失"}, 400)
+            fp = BASE_DIR / "episodes" / episode / "images" / os.path.basename(name)
+            if not fp.exists():
+                return self._json({"ok": False, "msg": "图片不存在"}, 404)
+            data_bytes = fp.read_bytes()
+            import mimetypes
+            ctype = mimetypes.guess_type(str(fp))[0] or "image/jpeg"
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(data_bytes)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(data_bytes)
+
+        if u.path == "/api/clear-episode-images":
+            """GL-20260902：清空期号 images 目录（试抓前清旧图）"""
+            episode = (data.get("episode") or "").strip()
+            imgs_dir = BASE_DIR / "episodes" / episode / "images"
+            removed = 0
+            if imgs_dir.is_dir():
+                for f in imgs_dir.iterdir():
+                    if f.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp"):
+                        f.unlink(missing_ok=True)
+                        removed += 1
+            return self._json({"ok": True, "removed": removed})
+
+        if u.path == "/api/download-pexels":
+            """GL-20260902：试抓 Pexels 图片（预览用，不跑流水线）"""
+            episode = (data.get("episode") or "").strip()
+            keyword = (data.get("keyword") or "").strip()
+            count = int(data.get("count") or 8)
+            if not episode or not keyword:
+                return self._json({"ok": False, "msg": "期号或关键词缺失"})
+            imgs_dir = BASE_DIR / "episodes" / episode / "images"
+            try:
+                from lib.fetch_materials import fetch_pexels_photos
+                imgs = fetch_pexels_photos(keyword, count, str(imgs_dir))
+                log(f"👁 Pexels 试抓：期号 {episode}「{keyword}」{len(imgs)} 张")
+                return self._json({"ok": True, "count": len(imgs)})
+            except Exception as e:
+                return self._json({"ok": False, "msg": f"下载失败：{e}"})
+
+        if u.path == "/api/replace-image":
+            """GL-20260902：换掉期号里某张图——删旧图，按新关键词重新搜 Pexels 下载替换"""
+            episode = (data.get("episode") or "").strip()
+            name = (data.get("name") or "").strip()
+            keyword = (data.get("keyword") or "").strip()
+            if not episode or not name:
+                return self._json({"ok": False, "msg": "参数缺失"})
+            ep_dir = BASE_DIR / "episodes" / episode
+            imgs_dir = ep_dir / "images"
+            old_fp = imgs_dir / os.path.basename(name)
+            if not old_fp.exists():
+                return self._json({"ok": False, "msg": "原图不存在"})
+            if keyword:
+                old_fp.unlink(missing_ok=True)  # 先删旧图
+                try:
+                    from lib.fetch_materials import fetch_pexels_photos
+                    new_imgs = fetch_pexels_photos(keyword, 1, str(imgs_dir))
+                    if not new_imgs:
+                        return self._json({"ok": False, "msg": "Pexels 没搜到图"})
+                    new_name = os.path.basename(new_imgs[0])
+                except Exception as e:
+                    return self._json({"ok": False, "msg": f"Pexels 换图失败：{e}"})
+                log(f"🖼 换图：{episode}/{name} → {new_name}（关键词：{keyword}）")
+                return self._json({"ok": True, "name": new_name})
+            return self._json({"ok": False, "msg": "请提供新关键词"})
 
         if u.path == "/api/stop":
             proc = TASK.get("proc")
