@@ -22,9 +22,7 @@ tts:
   subtitle_format: vtt
   emotion_rates: {}
 ai_script:
-  # GL-20260901：AI 稿模仿使用者个人风格（从每次改稿中学习，越写越像）
   style_enabled: true
-
 image:
   source: generate
   local_dir: ''
