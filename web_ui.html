@@ -306,6 +306,16 @@
           </div>
           <div class="hint">支持抖音/B站/YouTube 等 yt-dlp 可识别的链接；适合"看到好的直接存"</div>
         </div>
+        <!-- GL-20260902：试搜预览（先看候选再勾选下载，避免误下大视频） -->
+        <div class="row">
+          <label>先预览再下载</label>
+          <div class="flex">
+            <button class="ghost" onclick="previewFetch()">🔍 试搜预览</button>
+            <span class="hint" id="fetchPreviewHint"></span>
+          </div>
+          <div class="hint">先搜出候选列表（标题/时长/UP主/缩略图），勾选要的再下载，省流量防误下长视频</div>
+        </div>
+        <div id="fetchPreview" style="display:none;margin-top:8px"></div>
       </div>
     </div>
 
@@ -859,6 +869,101 @@ async function replacePexelsImage(episode, name, btn){
   const r = await post('/api/replace-image', {episode, name, keyword: kw});
   if(!r.ok){ alert(r.msg || '换图失败'); btn.disabled = false; btn.textContent = '🔄 换一张'; return; }
   renderPexelsPreview();
+}
+
+// ── GL-20260902：抓视频试搜预览 + 勾选下载 ──
+async function previewFetch(){
+  const kw = ($('a_fetch_kw').value || '').trim();
+  if(!kw){ alert('请先填搜索关键词'); return; }
+  const source = $('a_fetch_source').value;
+  const count = parseInt($('a_fetch_count').value) || 3;
+  const btn = event && event.target ? event.target : null;
+  const hint = $('fetchPreviewHint');
+  if(btn){ btn.disabled = true; }
+  hint.textContent = '搜索中…';
+  try {
+    const r = await post('/api/video-search', {keyword: kw, source, count});
+    if(!r.ok){ hint.textContent = '❌ ' + r.msg; return; }
+    window._fetchCandidates = r.items;
+    hint.textContent = '✅ ' + r.count + ' 条候选，勾选后下载';
+    renderFetchPreview(r.items, source);
+  } catch(e){
+    hint.textContent = '❌ 搜索失败：' + e.message;
+  } finally {
+    if(btn){ btn.disabled = false; }
+  }
+}
+
+function renderFetchPreview(items, source){
+  const box = $('fetchPreview');
+  box.style.display = 'block';
+  box.innerHTML = '';
+  const list = document.createElement('div');
+  list.style.cssText = 'display:flex;flex-direction:column;gap:6px;max-height:320px;overflow-y:auto;';
+  items.forEach((it, i) => {
+    const row = document.createElement('label');
+    row.style.cssText = 'display:flex;align-items:center;gap:10px;background:#100d09;border:1px solid #342d24;border-radius:6px;padding:6px;cursor:pointer;';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox'; cb.checked = true; cb.style.flex = '0 0 auto';
+    cb.dataset.idx = i;
+    let thumbEl;
+    if(it.thumbnail){
+      thumbEl = document.createElement('img');
+      thumbEl.src = it.thumbnail; thumbEl.loading = 'lazy';
+      thumbEl.style.cssText = 'width:96px;height:54px;object-fit:cover;border-radius:4px;flex:0 0 auto;background:#0b0906;';
+      thumbEl.onerror = function(){ this.style.display = 'none'; };
+    } else {
+      thumbEl = document.createElement('div');
+      thumbEl.textContent = '无图';
+      thumbEl.style.cssText = 'width:96px;height:54px;background:#0b0906;border-radius:4px;display:flex;align-items:center;justify-content:center;color:#6b6352;font-size:11px;flex:0 0 auto;';
+    }
+    const info = document.createElement('div');
+    info.style.cssText = 'flex:1;min-width:0;';
+    info.innerHTML = `<div style="font-size:13px;color:#e8e4dc;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escHtml(it.title)}</div>` +
+      `<div class="hint" style="font-size:11px;margin-top:2px;">${escHtml(it.channel)} · ${it.duration_str}${it.duration > 1200 ? ' ⚠长' : ''}</div>`;
+    row.appendChild(cb);
+    row.appendChild(thumbEl);
+    row.appendChild(info);
+    list.appendChild(row);
+  });
+  box.appendChild(list);
+  const actions = document.createElement('div');
+  actions.style.cssText = 'margin-top:10px;display:flex;gap:10px;align-items:center;';
+  const dlBtn = document.createElement('button');
+  dlBtn.textContent = '⬇ 下载勾选的并出片';
+  dlBtn.onclick = fetchDownloadSelected;
+  const allBtn = document.createElement('button');
+  allBtn.className = 'ghost'; allBtn.textContent = '全选/全不选';
+  allBtn.onclick = () => {
+    const cbs = list.querySelectorAll('input[type=checkbox]');
+    const anyOff = Array.from(cbs).some(c => !c.checked);
+    cbs.forEach(c => c.checked = anyOff);
+  };
+  actions.appendChild(dlBtn);
+  actions.appendChild(allBtn);
+  box.appendChild(actions);
+}
+
+async function fetchDownloadSelected(){
+  const episode = $('episode').value.trim();
+  if(!episode){ alert('请先填期号（或选稿子自动填）'); return; }
+  const items = window._fetchCandidates || [];
+  const checked = [];
+  document.querySelectorAll('#fetchPreview input[type=checkbox]').forEach(cb => {
+    if(cb.checked) checked.push(items[parseInt(cb.dataset.idx)]);
+  });
+  if(!checked.length){ alert('请至少勾选一条'); return; }
+  const topic = ($('a_fetch_topic').value || '').trim() || checked[0].title.trim().split(/[\s,，]+/)[0].slice(0, 8);
+  const r = await post('/api/video-download-selected', {
+    episode, topic, source: $('a_fetch_source').value,
+    items: checked, clip_seconds: 90,
+    canvas: $('a_canvas').value, name: $('name').value, title: $('title').value, series: $('series').value,
+  });
+  if(!r.ok){ alert(r.msg || '启动失败'); return; }
+  $('fetchPreviewHint').textContent = r.msg;
+  switchView('progress');
+  $('stepText').textContent = '下载素材中…';
+  poll();
 }
 
 async function post(url, data){

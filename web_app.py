@@ -953,6 +953,94 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": True, "name": new_name})
             return self._json({"ok": False, "msg": "请提供新关键词"})
 
+        if u.path == "/api/video-search":
+            """GL-20260902：试搜视频素材（只拉元数据+缩略图，不下载）"""
+            keyword = (data.get("keyword") or "").strip()
+            if not keyword:
+                return self._json({"ok": False, "msg": "请填写搜索关键词"})
+            source = (data.get("source") or "youtube").strip()
+            count = min(10, max(1, int(data.get("count") or 5)))
+            try:
+                from lib.fetch_materials import search
+                entries = search(keyword, count=count * 3, source=source)
+                # 去重 + 截断标题
+                seen, out = set(), []
+                for e in entries:
+                    vid = e.get("id")
+                    if not vid or vid in seen:
+                        continue
+                    seen.add(vid)
+                    dur = e.get("duration") or 0
+                    out.append({
+                        "id": vid,
+                        "title": (e.get("title") or "?")[:70],
+                        "duration": dur,
+                        "duration_str": (f"{dur // 60}:{dur % 60:02d}" if dur else "?"),
+                        "channel": (e.get("channel") or "?")[:20],
+                        "thumbnail": e.get("thumbnail", ""),
+                        "url": e.get("url", ""),
+                    })
+                    if len(out) >= count:
+                        break
+                if not out:
+                    return self._json({"ok": False, "msg": f"「{keyword}」没有搜到结果，换关键词试试"})
+                return self._json({"ok": True, "items": out, "count": len(out),
+                                   "keyword": keyword, "source": source})
+            except Exception as e:
+                return self._json({"ok": False, "msg": f"搜索失败：{e}"})
+
+        if u.path == "/api/video-download-selected":
+            """GL-20260902：下载勾选的视频素材 → 入库 → 后续走视频模式出片"""
+            if TASK["running"]:
+                return self._json({"ok": False, "msg": "已有任务在跑"})
+            episode = (data.get("episode") or "").strip()
+            topic = (data.get("topic") or "").strip() or "素材"
+            source = (data.get("source") or "youtube").strip()
+            items = data.get("items") or []
+            clip_seconds = int(data.get("clip_seconds") or 90)
+            if not episode or not items:
+                return self._json({"ok": False, "msg": "期号或勾选项缺失"})
+            ep_dir = BASE_DIR / "episodes" / episode
+            ep_dir.mkdir(parents=True, exist_ok=True)
+
+            def _run():
+                try:
+                    from lib.fetch_materials import download
+                    root = str(BASE_DIR / "素材库" / topic)
+                    downloaded = []
+                    for i, it in enumerate(items, 1):
+                        url = it.get("url") or it.get("id")
+                        title = (it.get("title") or "素材")[:30]
+                        if not url:
+                            continue
+                        log(f"  ⬇ 下载 {i}/{len(items)}: {title}…")
+                        path = download(url, topic, None, None,
+                                        f"{topic} 相关画面（横屏16:9）", root,
+                                        max_height=720, source=source)
+                        downloaded.append(path)
+                    if not downloaded:
+                        raise RuntimeError("没有下载到任何视频")
+                    # 记录勾选素材 → 视频模式出片（复用 run_pipeline video_dir）
+                    params = {
+                        "episode": episode,
+                        "ai_mode": True,
+                        "video_dir": root,
+                        "canvas": data.get("canvas") or "dual",
+                        "name": data.get("name") or "",
+                        "title": data.get("title") or "",
+                        "series": data.get("series") or "",
+                    }
+                    log(f"✓ 视频素材就绪：{len(downloaded)} 条 → {root}")
+                    run_pipeline(params)
+                except Exception as e:
+                    TASK["error"] = str(e)
+                    log(f"❌ 出错：{e}")
+                    TASK["running"] = False
+                    TASK["done"] = True
+
+            threading.Thread(target=_run, daemon=True).start()
+            return self._json({"ok": True, "msg": f"开始下载 {len(items)} 条并出片"})
+
         if u.path == "/api/stop":
             proc = TASK.get("proc")
             if not TASK["running"] or proc is None:

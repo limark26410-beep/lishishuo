@@ -214,8 +214,10 @@ def search(keyword: str, count: int, dur_max: int = 0,
            source: str = "youtube") -> list:
     """搜索候选。source: youtube / bilibili。
 
-    返回 [{title, duration, channel, id}]。B 站用 bilisearch 完整提取
-    （extract_flat 下 B 站条目信息不全）+ Referer/buvid cookie 防 412。
+    返回 [{title, duration, channel, id, thumbnail, url}]。
+    B 站用 bilisearch 完整提取（extract_flat 下 B 站条目信息不全）
+    + Referer/buvid cookie 防 412。
+    GL-20260902：附带 thumbnail（预览用）和 url（下载用，webpage_url 缺失时拼标准链接）。
     """
     if source == "pexels":
         return _pexels_search(keyword, count, dur_max)
@@ -244,11 +246,23 @@ def search(keyword: str, count: int, dur_max: int = 0,
         dur = e.get("duration") or 0
         if dur_max and dur > dur_max:
             continue
+        vid = e.get("id")
+        thumb = ""
+        ths = e.get("thumbnails") or []
+        if ths:
+            thumb = ths[0].get("url", "")
+        # 下载 URL：webpage_url 缺失时按平台标准链接拼
+        dl_url = e.get("webpage_url") or ""
+        if not dl_url and vid:
+            dl_url = (f"https://www.bilibili.com/video/{vid}" if is_bili
+                      else f"https://www.youtube.com/watch?v={vid}")
         entries.append({
             "title": e.get("title", "?"),
             "duration": dur,
             "channel": e.get("channel", "?"),
-            "id": e.get("id"),
+            "id": vid,
+            "thumbnail": thumb,
+            "url": dl_url,
         })
     return entries
 
