@@ -204,6 +204,7 @@
       <div class="radio-group">
         <label><input type="radio" name="imgsrc" value="generate" checked onchange="toggleImg()"> 自动生图</label>
         <label><input type="radio" name="imgsrc" value="local" onchange="toggleImg()"> 本地图片</label>
+        <label><input type="radio" name="imgsrc" value="pexels" onchange="toggleImg()"> Pexels 素材库</label>
         <label><input type="radio" name="imgsrc" value="video" onchange="toggleImg()"> 视频素材库</label>
         <label><input type="radio" name="imgsrc" value="fetch" onchange="toggleImg()"> 抓视频素材</label>
       </div>
@@ -217,6 +218,28 @@
           <input type="checkbox" id="shuffleImg" checked>
           每期打乱图片顺序（多期共用一个文件夹时，避免每期画面重复）
         </label>
+      </div>
+      <!-- GL-20260902：Pexels 素材库（免版权图片搜索下载 → 图片模式混剪） -->
+      <div id="pexelsBox" style="display:none;margin-top:10px">
+        <div class="row">
+          <label>搜索关键词</label>
+          <div class="flex">
+            <input type="text" id="a_pexels_kw" placeholder="如：ancient china temple / 长城 雪景（英文命中率高）">
+            <button class="ghost" onclick="suggestFetchKeywords()">从稿子生成</button>
+          </div>
+          <div class="hint">Pexels 免版权素材库，按关键词搜图片自动下载做画面（需 PEXELS_API_KEY，已配置）；AI 生图额度不够时用它</div>
+        </div>
+        <div class="row">
+          <label>图片数量</label>
+          <div class="flex">
+            <select id="a_pexels_count" style="flex:1">
+              <option value="6">6 张（1分钟）</option>
+              <option value="8" selected>8 张（约1.5分钟）</option>
+              <option value="12">12 张（约2分钟）</option>
+              <option value="16">16 张（约3分钟）</option>
+            </select>
+          </div>
+        </div>
       </div>
       <!-- GL-20260817-01：视频素材库并进「图片来源」，作为第三个选项显式选择 -->
       <div id="videoBox" style="display:none;margin-top:10px">
@@ -720,6 +743,7 @@ async function saveDropbox(){
 function toggleImg(){
   const v = document.querySelector('input[name=imgsrc]:checked').value;
   $('imgDirBox').style.display = v === 'local' ? 'block' : 'none';
+  $('pexelsBox').style.display = v === 'pexels' ? 'block' : 'none'; // GL-20260902
   $('videoBox').style.display = v === 'video' ? 'block' : 'none'; // GL-20260817-01：视频素材库显式三选一
   $('fetchBox').style.display = v === 'fetch' ? 'block' : 'none'; // GL-20260827：抓视频素材
 }
@@ -1209,6 +1233,12 @@ async function start(){
   if(src === 'local'){
     params.images_dir = $('imgdir').value.trim();
     params.shuffle_images = $('shuffleImg').checked;
+  } else if(src === 'pexels'){
+    // GL-20260902：Pexels 素材库（搜图下载 → 图片模式）
+    const kw = ($('a_pexels_kw').value || '').trim();
+    if(!kw){ alert('请填 Pexels 搜索关键词（可点「从稿子生成」）'); return; }
+    params.fetch_photos = kw;
+    params.fetch_photo_count = parseInt($('a_pexels_count').value) || 8;
   } else if(src === 'video'){
     const root = ($('a_video_root').value || '').trim().replace(/[\\/]+$/, '');
     if(!root){ alert('请先填视频素材库根目录'); return; } // GL-20260817-01 第五节：空根目录守卫，防静默回退图片模式

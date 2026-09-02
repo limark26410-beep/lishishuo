@@ -367,6 +367,19 @@ def run_pipeline(params):
             # 视频模式：素材目录，run.py 自动切 clip 模式并跳过生图
             cmd += ["--video-dir", os.path.expanduser(params["video_dir"])]
             log(f"✓ 视频素材库：{params['video_dir']}")
+        elif params.get("fetch_photos"):
+            # GL-20260902：图片来源 → Pexels 素材库（搜索下载图片 → 图片模式混剪）
+            kw = (params.get("fetch_photos") or "").strip()
+            if not kw:
+                raise RuntimeError("Pexels 素材库：请填写搜索关键词")
+            count = int(params.get("fetch_photo_count") or 8)
+            try:
+                from lib.fetch_materials import fetch_pexels_photos
+                imgs = fetch_pexels_photos(kw, count, str(ep_dir / "images"))
+                log(f"✓ Pexels 图片素材：{len(imgs)} 张（关键词：{kw}）")
+            except Exception as e:
+                raise RuntimeError(f"Pexels 图片下载失败：{e}")
+            cmd.append("--skip-images")
         elif params.get("images_dir"):
             src = Path(params["images_dir"])
             dst = ep_dir / "images"

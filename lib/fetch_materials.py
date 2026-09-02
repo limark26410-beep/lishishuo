@@ -95,6 +95,8 @@ def _to_h264(path: str) -> None:
     os.replace(tmp, path)
 
 
+from urllib.parse import urlparse
+
 def _pexels_api_key() -> str:
     """Pexels API key（pexels.com/api 免费申请）"""
     return os.environ.get("PEXELS_API_KEY", "") or _read_env_key("PEXELS_API_KEY")
@@ -148,6 +150,62 @@ def _pexels_download(url: str, out_path: str) -> None:
         for chunk in r.iter_content(1024 * 256):
             if chunk:
                 f.write(chunk)
+
+
+# ── GL-20260902：Pexels 图片素材（图片来源 → Pexels 素材库） ──
+
+def _pexels_search_photos(keyword: str, count: int) -> list:
+    """Pexels 图片搜索（返回图片直链列表）"""
+    key = _pexels_api_key()
+    if not key:
+        raise RuntimeError("未配置 PEXELS_API_KEY（https://www.pexels.com/api/ 免费申请）")
+    r = requests.get(
+        "https://api.pexels.com/v1/search",
+        params={"query": keyword, "per_page": max(count, 5),
+                "orientation": "landscape"},
+        headers={"Authorization": key}, timeout=20)
+    r.raise_for_status()
+    urls = []
+    for p in (r.json().get("photos") or []):
+        # 取 1080p 左右的原图直链（src.large 是压缩版，原图 original 可能过大）
+        src = p.get("src") or {}
+        url = src.get("large2x") or src.get("large") or src.get("original")
+        if url:
+            urls.append(url)
+    return urls
+
+
+def fetch_pexels_photos(keyword: str, count: int, out_dir: str) -> list:
+    """按关键词搜索并下载 Pexels 图片到 out_dir，返回下载文件路径列表。
+    用于「图片来源 → Pexels 素材库」：搜索 → 下载 → 图片模式混剪。"""
+    import tempfile, shutil
+    key = _pexels_api_key()
+    if not key:
+        raise RuntimeError("未配置 PEXELS_API_KEY（https://www.pexels.com/api/ 免费申请）")
+    os.makedirs(out_dir, exist_ok=True)
+    urls = _pexels_search_photos(keyword, count)
+    if not urls:
+        raise RuntimeError(f"Pexels 未找到「{keyword}」相关图片")
+    downloaded = []
+    for i, url in enumerate(urls, 1):
+        ext = os.path.splitext(urlparse(url).path)[1] or ".jpg"
+        if ext.lower() not in (".jpg", ".jpeg", ".png", ".webp"):
+            ext = ".jpg"
+        out_path = os.path.join(out_dir, f"pexels_{i:02d}{ext}")
+        try:
+            r = requests.get(url, stream=True, timeout=60)
+            r.raise_for_status()
+            with open(out_path, "wb") as f:
+                for chunk in r.iter_content(1024 * 256):
+                    if chunk:
+                        f.write(chunk)
+            downloaded.append(out_path)
+        except Exception as e:
+            print(f"  ⚠ Pexels 第{i}张下载失败: {e}")
+    if not downloaded:
+        raise RuntimeError("Pexels 图片全部下载失败")
+    print(f"  ✓ Pexels 图片下载: {len(downloaded)} 张 → {out_dir}")
+    return downloaded
 
 
 def search(keyword: str, count: int, dur_max: int = 0,
