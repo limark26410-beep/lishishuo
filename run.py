@@ -195,6 +195,24 @@ def _encode_args(cfg: dict, final: bool = False) -> list:
     return ["-c:v", enc, "-b:v", opts.get("bitrate", "3000k")]
 
 
+def _align_subtitles(episode_dir: str, subs_srt: str, audio_path: str, canvas):
+    """字幕 ASR 校正（真实音频对齐）。失败返回原 srt 路径，不阻断出片。"""
+    # 回滚：删除本函数及两处调用（"字幕 ASR 校正"）即恢复 edge-tts 原字幕
+    try:
+        from srt_align import align_srt
+        _align_out = _cv_path(episode_dir, "subs_aligned.srt", canvas)
+        align_srt(
+            srt_path=subs_srt,
+            audio_path=audio_path,
+            script_path=os.path.join(episode_dir, "script.txt"),
+            output_path=_align_out,
+        )
+        return _align_out
+    except Exception as _e:  # noqa: BLE001
+        print(f"  ⚠ 字幕 ASR 校正失败（{type(_e).__name__}: {str(_e)[:120]}），保留原字幕")
+        return subs_srt
+
+
 def _time_str(sec: float) -> str:
     td = timedelta(seconds=int(sec))
     return str(td)
@@ -501,6 +519,11 @@ def step_mix(episode_dir: str, tts_result: dict, img_result: dict, cfg: dict, ca
                            check=True, capture_output=True, text=True)
         print(f"  ✓ 无字幕版: {os.path.basename(nosub_out)}")
 
+    # ── 3e.5 字幕 ASR 校正（真实音频对齐，解决 edge-tts 字幕不同步）──
+    subs_srt = _align_subtitles(episode_dir, subs_srt,
+                                tts_result["audio_path"], canvas)
+    # ── END 3e.5 ──
+
     # ── 3f. 字幕后处理 + 自动检查 ──
     print(f"\n  字幕折行处理...")
     subtitle_burn.configure(cfg)
@@ -619,12 +642,20 @@ def _video_step_mix(episode_dir: str, tts_result: dict, cfg: dict, canvas=None, 
         raise RuntimeError(
             f"该题材缺素材：{lib_root} 下没有可用视频素材\n"
             f"请把素材按「题材/主题_编号.mp4」放进素材库（详见 使用说明.md）")
-    total_dur = sum(m["duration_sec"] for m in materials)
-    print(f"\n  可用素材: {len(materials)} 条 (总时长 {_time_str(total_dur)})")
+    # GL-20260902：图片素材无固有时长（-1），只统计视频时长做池校验
+    _video_mats = [m for m in materials if m.get("type") != "image"]
+    _img_mats = [m for m in materials if m.get("type") == "image"]
+    total_dur = sum(m["duration_sec"] for m in _video_mats)
+    _pool_note = (f"，另含 {len(_img_mats)} 张图片" if _img_mats else "")
+    print(f"\n  可用素材: {len(materials)} 条{_pool_note} "
+          f"(视频总时长 {_time_str(total_dur)})")
     print(f"  音频时长: {_time_str(audio_dur)}")
-    if total_dur < audio_dur:
+    if total_dur < audio_dur and not _img_mats:
         print(f"  ⚠ 素材总时长 {_time_str(total_dur)} < 音频 {_time_str(audio_dur)}："
               f"将循环复用素材出片，画面可能重复；正式生产建议素材池 ≥ 音频时长")
+    elif total_dur < audio_dur and _img_mats:
+        print(f"  ℹ 视频总时长 {_time_str(total_dur)} < 音频，"
+              f"但含 {len(_img_mats)} 张图片可补画面（混合模式）")
 
     # ── 3v3. 选材计划（material_plan.json 已有→直接消费；否则 AI 选材/降级轮播）──
     plan = _resolve_video_plan(episode_dir, segments, materials)
@@ -661,6 +692,23 @@ def _video_step_mix(episode_dir: str, tts_result: dict, cfg: dict, canvas=None, 
             print(f"  ⚠ 选材计划素材不存在: {p.get('material')}，顺序补用 {mat['name']}")
         is_last = (i == len(plan) - 1)
         clip_dur = seg_durs[idx] + (_tail_dur if is_last else _xfade_dur)
+        is_image = (mat.get("type") == "image")
+        clip_out = os.path.join(clips_dir, f"clip_{i+1:03d}.mp4")
+        if is_image:
+            # GL-20260902 混合剪辑：图片素材 → Ken Burns 慢推近（无固有时长，按段时长）
+            kb_cfg = video_cfg.get("ken_burns", {}) or {}
+            print(f"  [{i+1}/{len(plan)}] 🖼 {mat['name']} (图片) "
+                  f"{_time_str(clip_dur)}")
+            build_ken_burns_clip(
+                image_path=mat["path"],
+                output_path=clip_out,
+                duration=clip_dur,
+                cfg=cfg,
+                width=width, height=height, fps=fps,
+                zoom_end=float(kb_cfg.get("zoom_end", 1.08)),
+            )
+            clip_paths.append(clip_out)
+            continue
         start = float(p.get("clip_start") or 0)
         avail = mat["duration_sec"]
         # GL-20260817-02：不再截短 clip_dur，段落超长交给 build_video_clip 内部循环填充
@@ -668,7 +716,6 @@ def _video_step_mix(episode_dir: str, tts_result: dict, cfg: dict, canvas=None, 
             start = 0.0
             print(f"    ⚠ 段 {p['index']}: 起点+时长超出素材"
                   f"({clip_dur:.1f}s>{avail:.1f}s)，起点回退 0，交由循环填充")
-        clip_out = os.path.join(clips_dir, f"clip_{i+1:03d}.mp4")
         print(f"  [{i+1}/{len(plan)}] {mat['name']} "
               f"{_time_str(clip_dur)} @{start:.1f}s")
         # GL-20260828：去原视频字幕（横屏素材上下双端裁剪，config video.crop_vertical 可调）
@@ -734,7 +781,11 @@ def _video_step_mix(episode_dir: str, tts_result: dict, cfg: dict, canvas=None, 
 
 def _resolve_video_plan(episode_dir: str, segments: list, materials: list) -> list:
     """选材计划：material_plan.json 已有 → 直接消费（预览确认路径）；
-    否则内部调 AI 选材（失败降级顺序轮播）。计划永远写回文件保证可消费。"""
+    否则内部调 AI 选材（失败降级顺序轮播）。计划永远写回文件保证可消费。
+
+    GL-20260902 混合剪辑：素材池同时含视频+图片时（type=image），
+    不走 AI 选材（AI 按视频时长设计，图片 duration=-1 会误判），
+    直接顺序轮播（mtime 新素材优先），视频/图片按段落自然穿插。"""
     plan_path = os.path.join(episode_dir, "material_plan.json")
     if os.path.exists(plan_path):
         try:
@@ -755,14 +806,22 @@ def _resolve_video_plan(episode_dir: str, segments: list, materials: list) -> li
         except Exception as e:
             print(f"  ⚠ material_plan.json 读取失败（{e}），重新选材")
 
-    from ai_script_gen import recommend_material
-    api_key = os.environ.get("DEEPSEEK_API_KEY", "")
-    try:
-        plan = recommend_material(segments, materials, api_key)
-        print(f"  ✓ AI 选材完成: {len(plan)} 段")
-    except Exception as e:
-        print(f"  ⚠ AI 选材失败（{e}），降级为顺序轮播")
+    has_image = any(m.get("type") == "image" for m in materials)
+    has_video = any(m.get("type") != "image" for m in materials)
+    if has_image and has_video:
+        # 混合模式：顺序轮播（mtime 新优先），视频图片自然穿插
         plan = _fallback_video_plan(segments, materials)
+        print(f"  ✓ 混合剪辑: {sum(1 for m in materials if m.get('type')=='image')} 图 "
+              f"+ {sum(1 for m in materials if m.get('type')!='image')} 视频，顺序轮播分配")
+    else:
+        from ai_script_gen import recommend_material
+        api_key = os.environ.get("DEEPSEEK_API_KEY", "")
+        try:
+            plan = recommend_material(segments, materials, api_key)
+            print(f"  ✓ AI 选材完成: {len(plan)} 段")
+        except Exception as e:
+            print(f"  ⚠ AI 选材失败（{e}），降级为顺序轮播")
+            plan = _fallback_video_plan(segments, materials)
     try:
         with open(plan_path, "w", encoding="utf-8") as f:
             json.dump(plan, f, ensure_ascii=False, indent=1)
@@ -776,7 +835,34 @@ def _fallback_video_plan(segments: list, materials: list) -> list:
 
     GL-20260831：按 mtime 倒序（新素材优先）——刚抓的素材先用上，
     避免轮播总选素材库前几个旧文件导致画面不变。
+    GL-20260902 混合剪辑：池同时含视频+图片时交替分配（视频/图片穿插，
+    避免前几段扎堆同类；各自组内 mtime 新优先）。
     """
+    has_image = any(m.get("type") == "image" for m in materials)
+    has_video = any(m.get("type") != "image" for m in materials)
+    if has_image and has_video:
+        vids = sorted([m for m in materials if m.get("type") != "image"],
+                      key=lambda m: m.get("mtime", 0), reverse=True)
+        imgs = sorted([m for m in materials if m.get("type") == "image"],
+                      key=lambda m: m.get("mtime", 0), reverse=True)
+        plan = []
+        for i, s in enumerate(segments):
+            # 交替取（偶数段视频、奇数段图片），某类用完则全用另一类
+            if i % 2 == 0 and vids:
+                m = vids[i // 2 % len(vids)]
+            elif i % 2 == 1 and imgs:
+                m = imgs[i // 2 % len(imgs)]
+            elif vids:
+                m = vids[i % len(vids)]
+            else:
+                m = imgs[i % len(imgs)]
+            plan.append({
+                "index": s["index"], "text": s["text"],
+                "material": os.path.basename(m["path"]),
+                "material_path": m["path"], "clip_start": 0.0,
+                "reason": "混合轮播（视频/图片交替）",
+            })
+        return plan
     mats = sorted(materials, key=lambda m: m.get("mtime", 0), reverse=True)
     plan = []
     for i, s in enumerate(segments):
@@ -865,6 +951,11 @@ def _post_mix(episode_dir: str, merged_video: str, tts_result: dict, cfg: dict,
                             "-i", audio_mixed, "-c", "copy", nosub_out],
                            check=True, capture_output=True, text=True)
         print(f"  ✓ 无字幕版: {os.path.basename(nosub_out)}")
+
+    # ── 字幕 ASR 校正（视频模式；真实音频对齐，解决 edge-tts 字幕不同步）──
+    subs_srt = _align_subtitles(episode_dir, subs_srt,
+                                tts_result["audio_path"], canvas)
+    # ── END ──
 
     # ── 字幕后处理 + 自动检查 ──
     print(f"\n  字幕折行处理...")

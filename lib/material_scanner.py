@@ -23,6 +23,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 VIDEO_EXTS = (".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v")
+IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp")  # GL-20260902：混合剪辑（图片+视频同目录）
 CACHE_NAME = "_scan_cache.json"
 _CACHE_LOCK = threading.Lock()  # 写缓存加锁（watcher 与预览可能并发）
 
@@ -99,11 +100,14 @@ def _read_readme(theme_dir: Path) -> dict:
 
 def _scan_dir(theme_dir: Path, topic: str, theme: str,
               desc_map: dict, materials: list):
-    """扫描单层目录下的视频文件，收集素材条目（不含媒体信息，稍后并行 ffprobe）"""
+    """扫描单层目录下的视频+图片文件（GL-20260902：支持混合剪辑）"""
     for f in sorted(theme_dir.iterdir()):
         if not f.is_file():
             continue
-        if f.name.lower().endswith(VIDEO_EXTS) and not f.name.startswith("_"):
+        low = f.name.lower()
+        if low.startswith("_"):
+            continue
+        if low.endswith(VIDEO_EXTS):
             materials.append({
                 "path": str(f),
                 "name": f.stem,                      # 文件名（去扩展名）
@@ -111,7 +115,22 @@ def _scan_dir(theme_dir: Path, topic: str, theme: str,
                 "theme": theme,                      # 主题（无则空）
                 "desc": desc_map.get(f.name, ""),    # README 描述
                 "mtime": f.stat().st_mtime,          # 修改时间（新素材优先用）
+                "type": "video",
                 "duration_sec": 0.0,
+                "width": 0,
+                "height": 0,
+            })
+        elif low.endswith(IMAGE_EXTS):
+            # 图片素材：时长由消费方按段时长决定，ffprobe 跳过
+            materials.append({
+                "path": str(f),
+                "name": f.stem,
+                "topic": topic,
+                "theme": theme,
+                "desc": desc_map.get(f.name, ""),
+                "mtime": f.stat().st_mtime,
+                "type": "image",
+                "duration_sec": -1.0,   # -1 标记图片（无固有时长）
                 "width": 0,
                 "height": 0,
             })
@@ -175,18 +194,20 @@ def scan_material(library_root: str, max_workers: int = 4) -> list:
         desc_map = _read_readme(root)
         _scan_dir(root, root.name, "", desc_map, materials)
 
-    # 并行 ffprobe 读时长/分辨率
+    # 并行 ffprobe 读时长/分辨率（图片跳过，保留 -1 标记）
     skipped = 0
-    if materials:
+    video_mats = [m for m in materials if m.get("type") == "video"]
+    if video_mats:
         with ThreadPoolExecutor(max_workers=max_workers) as ex:
-            futures = {ex.submit(_ffprobe_info, m["path"]): m for m in materials}
+            futures = {ex.submit(_ffprobe_info, m["path"]): m for m in video_mats}
             for fut, m in futures.items():
                 info = fut.result()
                 if not info or not info.get("duration_sec"):
                     skipped += 1
                     continue
                 m.update(info)
-        materials = [m for m in materials if m.get("duration_sec")]
+        materials = [m for m in materials
+                     if m.get("type") == "image" or m.get("duration_sec")]
 
     # 写缓存（加锁 + 原子写，避免并发半写文件）
     try:
