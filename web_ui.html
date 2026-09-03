@@ -299,6 +299,19 @@
           </div>
           <div class="hint">抓几个片段（每个约 1-2 分钟；下载耗时约 1-2 分钟/个）</div>
         </div>
+        <!-- GL-20260902：Pexels 图片补画面（与视频混剪，免版权图） -->
+        <div class="row">
+          <label>🖼 Pexels 图片补画面（可选）</label>
+          <div class="flex">
+            <input type="text" id="a_fetch_px_kw" placeholder="如：ancient china temple（不填则不抓图）" style="flex:1">
+            <select id="a_fetch_px_count" style="width:110px">
+              <option value="3">3 张</option>
+              <option value="5" selected>5 张</option>
+              <option value="8">8 张</option>
+            </select>
+          </div>
+          <div class="hint">按关键词从 Pexels 抓免版权图片进同一题材目录，与视频自动交替混剪（意境/特写用图，实景用视频）</div>
+        </div>
         <div class="row">
           <label>或：粘贴视频链接</label>
           <div class="flex">
@@ -784,8 +797,9 @@ async function suggestFetchKeywords(){
   if(r.ok && r.keywords){
     $('a_fetch_kw').value = r.keywords;
     if(!$('a_fetch_topic').value.trim()) $('a_fetch_topic').value = r.keywords.trim().split(/[\s,，]+/)[0];
-    // GL-20260902：Pexels 关键词也一并预填
+    // GL-20260902：Pexels 关键词也一并预填（图补画面）
     if($('a_pexels_kw')) $('a_pexels_kw').value = r.keywords.trim().split(/[\s,，]+/)[0];
+    if($('a_fetch_px_kw')) $('a_fetch_px_kw').value = r.keywords.trim().split(/[\s,，]+/)[0];
   } else {
     alert(r.error || '生成失败');
   }
@@ -959,6 +973,8 @@ async function fetchDownloadSelected(){
   const r = await post('/api/video-download-selected', {
     episode, topic, source: $('a_fetch_source').value,
     items: checked, clip_seconds: 90,
+    photo_keyword: ($('a_fetch_px_kw').value || '').trim(),
+    photo_count: parseInt($('a_fetch_px_count').value) || 0,
     canvas: $('a_canvas').value, name: $('name').value, title: $('title').value, series: $('series').value,
   });
   if(!r.ok){ alert(r.msg || '启动失败'); return; }

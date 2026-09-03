@@ -1039,7 +1039,7 @@ class Handler(BaseHTTPRequestHandler):
 
             def _run():
                 try:
-                    from lib.fetch_materials import download
+                    from lib.fetch_materials import download, fetch_pexels_photos
                     root = str(BASE_DIR / "素材库" / topic)
                     downloaded = []
                     for i, it in enumerate(items, 1):
@@ -1054,6 +1054,16 @@ class Handler(BaseHTTPRequestHandler):
                         downloaded.append(path)
                     if not downloaded:
                         raise RuntimeError("没有下载到任何视频")
+                    # GL-20260902：Pexels 图片补画面——同关键词抓图进同一题材目录，
+                    # 混剪时与视频自动交替（混合剪辑）
+                    photo_kw = (data.get("photo_keyword") or "").strip()
+                    photo_n = int(data.get("photo_count") or 0)
+                    if photo_kw and photo_n > 0:
+                        try:
+                            imgs = fetch_pexels_photos(photo_kw, photo_n, root)
+                            log(f"🖼 Pexels 图片补画面：{len(imgs)} 张 → {root}（与视频混合剪辑）")
+                        except Exception as e:
+                            log(f"⚠ Pexels 图片补抓失败（不影响视频出片）: {str(e)[:100]}")
                     # 记录勾选素材 → 视频模式出片（复用 run_pipeline video_dir）
                     params = {
                         "episode": episode,
@@ -1064,7 +1074,8 @@ class Handler(BaseHTTPRequestHandler):
                         "title": data.get("title") or "",
                         "series": data.get("series") or "",
                     }
-                    log(f"✓ 视频素材就绪：{len(downloaded)} 条 → {root}")
+                    log(f"✓ 素材就绪：{len(downloaded)} 条视频 → {root}"
+                        f"{' + ' + str(len(imgs)) + ' 张图片' if photo_kw and photo_n > 0 and imgs else ''}")
                     run_pipeline(params)
                 except Exception as e:
                     TASK["error"] = str(e)
