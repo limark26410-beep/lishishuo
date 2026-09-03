@@ -46,6 +46,9 @@ from pipeline_steps import (
     overlay_title_card,
     archive_episode,
     make_review_pack,
+    build_ai_title_clip,       # GL-20260902：AI 视频片头
+    concat_with_ai_title,
+    shift_srt_file,
 )
 from ffmpeg_utils import (
     build_ken_burns_clip,
@@ -55,6 +58,7 @@ from ffmpeg_utils import (
     mix_audio,
     burn_subtitles,
     get_media_duration,
+    probe_video_size,
 )
 
 
@@ -589,6 +593,12 @@ def step_mix(episode_dir: str, tts_result: dict, img_result: dict, cfg: dict, ca
         print(f"\n  ⚠ 未找到 title_card.png，跳过片头")
         shutil.move(burned, final_output)
 
+    # GL-20260902：AI 视频片头（期号目录放 ai_title.mp4 → 拼到正片前）
+    try:
+        _apply_ai_title(episode_dir, final_output, cfg, canvas=canvas)
+    except Exception as e:
+        print(f"  ⚠ AI 片头处理失败（跳过）: {type(e).__name__}: {str(e)[:120]}")
+
     final_dur = get_media_duration(final_output)
     print(f"\n  ✓ final.mp4: {_time_str(final_dur)} | "
           f"{os.path.getsize(final_output)/1024/1024:.1f}MB")
@@ -905,6 +915,53 @@ def _material_by_path(materials: list, path: str):
     return None
 
 
+def _apply_ai_title(episode_dir: str, final_path: str, cfg: dict,
+                    canvas: str = None) -> float:
+    """GL-20260902：AI 视频片头——若期号目录有 ai_title.mp4，
+    叠标题字后拼到正片前，字幕时间轴整体平移。
+    返回片头时长（秒）；无 ai_title.mp4 返回 0（不处理）。
+    """
+    ai_video = os.path.join(episode_dir, "ai_title.mp4")
+    if not os.path.exists(ai_video):
+        return 0.0
+    tc_cfg = cfg.get("title_card", {})
+    # 标题文字：优先读 title_text.txt（gen_title 写入的真实标题），
+    # 缺省回退系列名；不再从 script.txt 首行猜（那是正文）
+    main_text = tc_cfg.get("series_name") or "历史说"
+    series_text = ""
+    tt_path = os.path.join(episode_dir, "title_text.txt")
+    if os.path.exists(tt_path):
+        main_text = open(tt_path, encoding="utf-8").read().strip() or main_text
+    main_text = main_text[:24]
+    # 尺寸：横竖通用（读正片分辨率）
+    vw, vh = probe_video_size(final_path)
+    if not vw or not vh:
+        vw, vh = 1080, 1920
+
+    clip_out = _cv_path(episode_dir, "_ai_title_clip.mp4", canvas)
+    print(f"\n  🎬 AI 视频片头: {os.path.basename(ai_video)} → 叠标题「{main_text}」")
+    build_ai_title_clip(
+        ai_video=ai_video,
+        title_text=main_text,
+        series_text=series_text,
+        output_path=clip_out,
+        cfg=cfg, width=vw, height=vh,
+    )
+    # 片头时长
+    title_dur = get_media_duration(clip_out)
+    final_ai = _cv_path(episode_dir, "final_with_title.mp4", canvas)
+    concat_with_ai_title(final_path, clip_out, final_ai)
+    # 替换正片
+    shutil.move(final_ai, final_path)
+    # 字幕整体平移
+    for srt_name in ("subs_processed.srt", "subs_aligned.srt"):
+        sp = _cv_path(episode_dir, srt_name, canvas)
+        if os.path.exists(sp):
+            shift_srt_file(sp, title_dur)
+    print(f"  ✓ AI 片头已接入 (+{title_dur:.1f}s)，字幕已平移")
+    return title_dur
+
+
 def _post_mix(episode_dir: str, merged_video: str, tts_result: dict, cfg: dict,
               seg_audio: list = None, canvas: str = None,
               also_nosub: bool = False) -> str:
@@ -1005,6 +1062,12 @@ def _post_mix(episode_dir: str, merged_video: str, tts_result: dict, cfg: dict,
     else:
         print(f"\n  ⚠ 未找到 title_card.png，跳过片头")
         shutil.move(burned, final_output)
+
+    # GL-20260902：AI 视频片头（期号目录放 ai_title.mp4 → 拼到正片前）
+    try:
+        _apply_ai_title(episode_dir, final_output, cfg, canvas=canvas)
+    except Exception as e:
+        print(f"  ⚠ AI 片头处理失败（跳过）: {type(e).__name__}: {str(e)[:120]}")
 
     final_dur = get_media_duration(final_output)
     print(f"\n  ✓ final.mp4: {_time_str(final_dur)} | "
@@ -1340,6 +1403,13 @@ def main():
             else:
                 print(f"  片头: 纯黑底（未指定背景图）")
             gen_title.render(parts, series, episode_dir, bg_image=_bg)
+            # GL-20260902：记录标题文字（AI 片头叠字用）
+            try:
+                with open(os.path.join(episode_dir, "title_text.txt"),
+                          "w", encoding="utf-8") as _tf:
+                    _tf.write("·".join(parts))
+            except Exception:
+                pass
             print(f"  ✓ 片头卡已生成 ({cfg.get('title_card',{}).get('duration',3)}秒)")
         except Exception as e:
             print(f"  ⚠ 片头生成失败: {e}")

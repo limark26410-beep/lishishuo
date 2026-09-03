@@ -137,6 +137,122 @@ def overlay_title_card(
 
 
 # ============================================================
+# AI 视频片头（GL-20260902：把 AI 生成的动态视频拼到正片前）
+# ============================================================
+
+def build_ai_title_clip(
+    ai_video: str,
+    title_text: str,
+    series_text: str,
+    output_path: str,
+    cfg: dict = None,
+    width: int = 1080,
+    height: int = 1920,
+) -> str:
+    """把 AI 视频转成片头短片：缩放到目标画幅 + 叠加标题文字。
+    标题文字用 drawtext 烧进画面（居中偏下）。
+    音频：AI 视频原声可能含特殊 AAC 数据导致 concat 解码失败，
+    统一替换为静音轨（片头纯画面，配音由正片延迟衔接）。
+    """
+    tc = (cfg or {}).get("title_card", {})
+    font = tc.get("font", "/System/Library/Fonts/PingFang.ttc")
+    if not os.path.exists(font):
+        font = "/System/Library/Fonts/STHeiti Light.ttc"
+    # 标题文字转义（drawtext 特殊字符）
+    def _esc(s):
+        return (str(s).replace("\\", "\\\\").replace(":", "\\:")
+                .replace("'", "\\'").replace("%", "\\%"))
+    title_esc = _esc(title_text)
+    series_esc = _esc(series_text)
+
+    cmd = [
+        "ffmpeg", "-y", "-i", ai_video,
+        "-vf",
+        (f"scale={width}:{height}:force_original_aspect_ratio=increase,"
+         f"crop={width}:{height},setsar=1,"
+         f"drawtext=fontfile={font}:text='{title_esc}':"
+         f"fontsize={int(height*0.07)}:fontcolor=white:"
+         f"x=(w-text_w)/2:y=h*0.62:"
+         f"shadowcolor=black@0.7:shadowx=2:shadowy=2,"
+         f"drawtext=fontfile={font}:text='{series_esc}':"
+         f"fontsize={int(height*0.035)}:fontcolor=0xD4AF37:"
+         f"x=(w-text_w)/2:y=h*0.62+{int(height*0.085)}:"
+         f"shadowcolor=black@0.7:shadowx=2:shadowy=2"),
+        "-an",                                # 去原声（可能有损坏 AAC）
+        "-c:v", "libx264", "-crf", "23", "-preset", "medium",
+        "-movflags", "+faststart",
+        output_path,
+    ]
+    subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=1800)
+    # 补一条静音音轨（正片 concat 需要音频流；也可让 muxer 只出视频）
+    return output_path
+
+
+def concat_with_ai_title(
+    main_video: str,
+    ai_title_clip: str,
+    output_path: str,
+) -> str:
+    """AI 片头（纯画面无音轨）+ 正片 拼接。
+    音频：只取正片音轨并延迟片头时长（片头期间静音），保证声画对位。
+    """
+    # 片头时长
+    probe = subprocess.run(
+        ["ffmpeg", "-i", ai_title_clip], capture_output=True, text=True)
+    import re as _re
+    m = _re.search(r"Duration: (\d+):(\d+):([\d.]+)", probe.stderr)
+    if not m:
+        raise RuntimeError("无法读取 AI 片头时长")
+    lead_sec = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
+    delay_ms = int(round(lead_sec * 1000))
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", ai_title_clip,      # 0: 片头（无音轨）
+        "-i", main_video,          # 1: 正片（有音轨）
+        "-filter_complex",
+        (f"[0:v]setsar=1[tv];[1:v]setsar=1[mv];"
+         f"[tv][mv]concat=n=2:v=1:a=0[v];"
+         f"[1:a]aresample=24000,pan=mono|c0=c0,adelay={delay_ms}|{delay_ms}[a]"),
+        "-map", "[v]", "-map", "[a]",
+        "-c:v", "libx264", "-crf", "23", "-preset", "medium",
+        "-c:a", "aac", "-b:a", "192k",
+        "-movflags", "+faststart",
+        output_path,
+    ]
+    subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=3600)
+    return output_path
+
+
+def shift_srt_file(srt_path: str, offset_sec: float, out_path: str = None) -> str:
+    """SRT 时间轴整体平移 offset_sec 秒（AI 片头插入后字幕后移）。"""
+    out_path = out_path or srt_path
+    def _add(t: str, off: float) -> str:
+        h, m, s = t.split(":")
+        ms_part = s.split(",")
+        sec = float(h) * 3600 + float(m) * 60 + float(ms_part[0]) + int(ms_part[1]) / 1000 + off
+        sec = max(0, sec)
+        hh = int(sec // 3600); mm = int((sec % 3600) // 60)
+        ss = int(sec % 60); mss = int(round((sec - int(sec)) * 1000))
+        if mss == 1000: ss += 1; mss = 0
+        return f"{hh:02d}:{mm:02d}:{ss:02d},{mss:03d}"
+
+    lines = open(srt_path, encoding="utf-8").read().split("\n")
+    out = []
+    for ln in lines:
+        m = re.match(r"^(\d+):(\d+):(\d+),(\d+)\s*-->\s*(\d+):(\d+):(\d+),(\d+)\s*$", ln.strip())
+        if m:
+            a = f"{m.group(1)}:{m.group(2)}:{m.group(3)},{m.group(4)}"
+            b = f"{m.group(5)}:{m.group(6)}:{m.group(7)},{m.group(8)}"
+            out.append(f"{_add(a, offset_sec)} --> {_add(b, offset_sec)}")
+        else:
+            out.append(ln)
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(out))
+    return out_path
+
+
+# ============================================================
 # 归档到素材库
 # ============================================================
 
