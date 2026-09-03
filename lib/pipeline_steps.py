@@ -150,9 +150,10 @@ def build_ai_title_clip(
     height: int = 1920,
 ) -> str:
     """把 AI 视频转成片头短片：缩放到目标画幅 + 叠加标题文字。
-    标题文字用 drawtext 烧进画面（居中偏下）。
-    音频：AI 视频原声可能含特殊 AAC 数据导致 concat 解码失败，
-    统一替换为静音轨（片头纯画面，配音由正片延迟衔接）。
+
+    改进（GL-20260902 v2）：
+    - 保留 AI 视频原声（重编码为干净 AAC，解决 concat 解码问题）
+    - 标题下方加半透明压暗条（任何画面都清晰，不会花）
     """
     tc = (cfg or {}).get("title_card", {})
     font = tc.get("font", "/System/Library/Fonts/PingFang.ttc")
@@ -164,27 +165,40 @@ def build_ai_title_clip(
                 .replace("'", "\\'").replace("%", "\\%"))
     title_esc = _esc(title_text)
     series_esc = _esc(series_text)
+    fs_main = int(height * 0.065)      # 主标题字号
+    fs_ser = int(height * 0.032)       # 系列名字号
+    # 标题区位置（垂直居中偏下）+ 压暗条
+    band_h = int(height * 0.16)        # 压暗条高度
+    band_top = int(height * 0.60)      # 压暗条顶部
+    tf_y = band_top + int(band_h * 0.30)   # 主标题 y
+    sf_y = band_top + int(band_h * 0.72)   # 系列名 y
+
+    vf = (
+        f"scale={width}:{height}:force_original_aspect_ratio=increase,"
+        f"crop={width}:{height},setsar=1,"
+        # 半透明压暗条（标题区），保证文字清晰
+        f"drawbox=x=0:y={band_top}:w={width}:h={band_h}:"
+        f"color=black@0.45:t=fill,"
+        f"drawtext=fontfile={font}:text='{title_esc}':"
+        f"fontsize={fs_main}:fontcolor=white:"
+        f"x=(w-text_w)/2:y={tf_y}:"
+        f"shadowcolor=black@0.8:shadowx=2:shadowy=2,"
+        f"drawtext=fontfile={font}:text='{series_esc}':"
+        f"fontsize={fs_ser}:fontcolor=0xD4AF37:"
+        f"x=(w-text_w)/2:y={sf_y}:"
+        f"shadowcolor=black@0.8:shadowx=2:shadowy=2"
+    )
 
     cmd = [
         "ffmpeg", "-y", "-i", ai_video,
-        "-vf",
-        (f"scale={width}:{height}:force_original_aspect_ratio=increase,"
-         f"crop={width}:{height},setsar=1,"
-         f"drawtext=fontfile={font}:text='{title_esc}':"
-         f"fontsize={int(height*0.07)}:fontcolor=white:"
-         f"x=(w-text_w)/2:y=h*0.62:"
-         f"shadowcolor=black@0.7:shadowx=2:shadowy=2,"
-         f"drawtext=fontfile={font}:text='{series_esc}':"
-         f"fontsize={int(height*0.035)}:fontcolor=0xD4AF37:"
-         f"x=(w-text_w)/2:y=h*0.62+{int(height*0.085)}:"
-         f"shadowcolor=black@0.7:shadowx=2:shadowy=2"),
-        "-an",                                # 去原声（可能有损坏 AAC）
+        "-vf", vf,
+        # 原声保留，重编码干净 AAC（44.1k 立体声）
         "-c:v", "libx264", "-crf", "23", "-preset", "medium",
+        "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2",
         "-movflags", "+faststart",
         output_path,
     ]
     subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=1800)
-    # 补一条静音音轨（正片 concat 需要音频流；也可让 muxer 只出视频）
     return output_path
 
 
@@ -193,9 +207,7 @@ def concat_with_ai_title(
     ai_title_clip: str,
     output_path: str,
 ) -> str:
-    """AI 片头（纯画面无音轨）+ 正片 拼接。
-    音频：只取正片音轨并延迟片头时长（片头期间静音），保证声画对位。
-    """
+    """AI 片头 + 正片 拼接（画面 concat；音频：片头原声在前，正片配音延迟衔接）。"""
     # 片头时长
     probe = subprocess.run(
         ["ffmpeg", "-i", ai_title_clip], capture_output=True, text=True)
@@ -206,15 +218,35 @@ def concat_with_ai_title(
     lead_sec = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
     delay_ms = int(round(lead_sec * 1000))
 
+    # 判断片头是否有音轨
+    has_audio = any("Audio:" in l for l in probe.stderr.split("\n"))
+    if has_audio:
+        # 片头原声 + 正片延迟：统一 24000 mono 后 concat
+        filt = (
+            f"[0:v]setsar=1[tv];[1:v]setsar=1[mv];"
+            f"[tv][mv]concat=n=2:v=1:a=0[v];"
+            f"[0:a]aresample=24000,pan=mono|c0=c0[a0];"
+            f"[1:a]aresample=24000,pan=mono|c0=c0,"
+            f"adelay={delay_ms}|{delay_ms}[a1];"
+            f"[a0][a1]concat=n=2:v=0:a=1[a]"
+        )
+        a_map = "[a]"
+    else:
+        # 片头无音轨：只延迟正片配音
+        filt = (
+            f"[0:v]setsar=1[tv];[1:v]setsar=1[mv];"
+            f"[tv][mv]concat=n=2:v=1:a=0[v];"
+            f"[1:a]aresample=24000,pan=mono|c0=c0,"
+            f"adelay={delay_ms}|{delay_ms}[a]"
+        )
+        a_map = "[a]"
+
     cmd = [
         "ffmpeg", "-y",
-        "-i", ai_title_clip,      # 0: 片头（无音轨）
-        "-i", main_video,          # 1: 正片（有音轨）
-        "-filter_complex",
-        (f"[0:v]setsar=1[tv];[1:v]setsar=1[mv];"
-         f"[tv][mv]concat=n=2:v=1:a=0[v];"
-         f"[1:a]aresample=24000,pan=mono|c0=c0,adelay={delay_ms}|{delay_ms}[a]"),
-        "-map", "[v]", "-map", "[a]",
+        "-i", ai_title_clip,      # 0: 片头
+        "-i", main_video,          # 1: 正片
+        "-filter_complex", filt,
+        "-map", "[v]", "-map", a_map,
         "-c:v", "libx264", "-crf", "23", "-preset", "medium",
         "-c:a", "aac", "-b:a", "192k",
         "-movflags", "+faststart",
