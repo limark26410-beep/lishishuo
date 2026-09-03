@@ -13,10 +13,10 @@ output:
   backup_before_overwrite: true
   archive_images: false
 tts:
-  engine: edge
-  voice: zh-CN-YunjianNeural
+  engine: doubao
+  voice: zh_female_vv_uranus_bigtts
   doubao:
-    voice: zh_male_dayi_saturn_bigtts
+    voice: zh_female_vv_uranus_bigtts
   rate: -4%
   rate_manual: true
   subtitle_format: vtt
@@ -30,7 +30,8 @@ image:
   style_anchor: 中国古风，水墨质感，纪录片氛围，无文字，场景宏大，写意风格
   tongyi:
     api_base: https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis
-    model: wanx2.1-t2i-turbo
+    # GL-20260902：qwen-image-3.0 走同步接口（有免费额度）；wanx2.1-t2i-turbo 为旧异步引擎
+    model: qwen-image-3.0
     size: 1080*1440
     batch_size: 3
     max_retries: 3

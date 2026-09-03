@@ -325,12 +325,17 @@ def step_image_gen(episode_dir: str, cfg: dict) -> dict:
 
     from tongyi_api import TongyiImageGen
     api_key = os.environ.get("DASHSCOPE_API_KEY", "")
-    client = TongyiImageGen(api_key=api_key)
+    # GL-20260902：模型/尺寸从 config 读（默认 wanx2.1-t2i-turbo，
+    # 可切 qwen-image-3.0 等——qwen-image 系列走同步接口有免费额度）
+    _tcfg = img_cfg.get("tongyi", {})
+    client = TongyiImageGen(api_key=api_key,
+                            model=_tcfg.get("model", ""),
+                            size=_tcfg.get("size", ""))
 
     result = client.batch_generate(
         prompts=[p["prompt"] for p in all_prompts],
         output_dir=images_dir,
-        batch_size=img_cfg.get("tongyi", {}).get("batch_size", 5),
+        batch_size=_tcfg.get("batch_size", 5),
     )
     result["prompts_meta"] = all_prompts
     return result

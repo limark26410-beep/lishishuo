@@ -31,17 +31,82 @@ def _curl_json(args: list, timeout: int = 30) -> dict:
 
 
 class TongyiImageGen:
-    """通义万相文生图客户端"""
+    """通义万相/qwen-image 文生图客户端（GL-20260902：支持 qwen-image-3.0 同步接口）"""
 
-    def __init__(self, api_key: str = ""):
+    def __init__(self, api_key: str = "", model: str = "", size: str = ""):
         self.api_key = api_key or os.environ.get("DASHSCOPE_API_KEY", "")
         if not self.api_key:
             raise ValueError("DASHSCOPE_API_KEY 未设置！")
+        # model 为空时用模块级 MODEL（wanx）；config 可传 qwen-image-3.0 等
+        self.model = model or MODEL
+        self.size = size or "1080*1440"
         self.total_images = 0
         self.total_cost = 0.0
         self.failures = []
 
+    def _is_qwen_image(self) -> bool:
+        return self.model.startswith("qwen-image")
+
+    def _qwen_submit_sync(self, prompt: str, output_path: str) -> bool:
+        """qwen-image 同步接口：POST multimodal-generation，直接拿 URL 下载。
+        用 requests（curl 走系统 SSL 可能证书失败；requests 正常）。"""
+        import requests
+        full_prompt = f"{prompt}，{STYLE_ANCHOR}"
+        body = {
+            "model": self.model,
+            "input": {"messages": [{"role": "user",
+                                    "content": [{"text": full_prompt}]}]},
+            "parameters": {"size": self.size, "n": 1,
+                           "prompt_extend": True, "watermark": False},
+        }
+        for attempt in range(MAX_RETRIES):
+            try:
+                resp = requests.post(
+                    "https://dashscope.aliyuncs.com/api/v1/services/"
+                    "aigc/multimodal-generation/generation",
+                    headers={"Authorization": f"Bearer {self.api_key}"},
+                    json=body, timeout=240)
+                if resp.status_code != 200:
+                    msg = resp.text[:150]
+                    print(f"  ⚠ qwen-image 提交失败 (try {attempt+1}/"
+                          f"{MAX_RETRIES}): {msg}")
+                    if "rate" in msg.lower() or "quota" in msg.lower():
+                        time.sleep(8)
+                    elif attempt < MAX_RETRIES - 1:
+                        time.sleep(3)
+                    continue
+                d = resp.json()
+                choices = (d.get("output") or {}).get("choices") or []
+                if not choices:
+                    print(f"  ⚠ qwen-image 空返回: {str(d)[:120]}")
+                    if attempt < MAX_RETRIES - 1:
+                        time.sleep(3)
+                    continue
+                content = choices[0].get("message", {}).get("content") or []
+                img_url = next((c.get("image") for c in content
+                                if c.get("image")), None)
+                if not img_url:
+                    print(f"  ⚠ qwen-image 无图片 URL")
+                    return False
+                dl = requests.get(img_url, timeout=90)
+                if dl.status_code == 200 and len(dl.content) > 1000:
+                    with open(output_path, "wb") as f:
+                        f.write(dl.content)
+                    print(f"  ✓ {os.path.basename(output_path)} "
+                          f"({len(dl.content)/1024:.0f}KB)")
+                    return True
+                return False
+            except Exception as e:
+                print(f"  ⚠ qwen-image 异常 (try {attempt+1}/{MAX_RETRIES}): {e}")
+                if attempt < MAX_RETRIES - 1:
+                    time.sleep(4)
+        return False
+
     def _submit(self, prompt: str) -> Optional[str]:
+        if self._is_qwen_image():
+            # qwen-image 走同步（返回 None task 表示同步完成），
+            # 由 batch_generate 的同步路径处理；这里抛给调用方分支
+            raise RuntimeError("qwen-image 应走 _gen_sync_path")
         full_prompt = f"{prompt}，{STYLE_ANCHOR}"
         data = json.dumps({
             "model": MODEL,
@@ -63,13 +128,13 @@ class TongyiImageGen:
                 if task_id:
                     return task_id
                 msg = result.get('message', '') or result.get('code', '')
-                print(f"  \u26a0 提交失败 (try {attempt+1}/{MAX_RETRIES}): {msg[:60]}")
+                print(f"  ⚠ 提交失败 (try {attempt+1}/{MAX_RETRIES}): {msg[:60]}")
                 if 'rate limit' in msg.lower():
                     time.sleep(5)
                 elif attempt < MAX_RETRIES - 1:
                     time.sleep(2)
             except Exception as e:
-                print(f"  \u26a0 提交异常 (try {attempt+1}/{MAX_RETRIES}): {e}")
+                print(f"  ⚠ 提交异常 (try {attempt+1}/{MAX_RETRIES}): {e}")
                 if attempt < MAX_RETRIES - 1:
                     time.sleep(3)
         return None
@@ -116,8 +181,41 @@ class TongyiImageGen:
         results = []
 
         print(f"\n{'='*50}")
-        print(f"\u751f\u56fe\uff1a{len(prompts)} \u6761\u63d0\u793a\u8bcd\uff0c\u5e76\u53d1 {batch_size}")
+        print(f"生图：{len(prompts)} 条提示词，并发 {batch_size}"
+              f"（模型 {self.model}）")
         print(f"{'='*50}")
+
+        if self._is_qwen_image():
+            # ── qwen-image 同步路径：逐个生成（无 task 轮询）──
+            for i, prompt in enumerate(prompts):
+                print(f"  [{i+1}/{len(prompts)}] 生成: {prompt[:40]}...")
+                ph = hashlib.sha1(prompt.encode()).hexdigest()[:8]
+                out = os.path.join(output_dir, f"img_{i:03d}_{ph}.jpg")
+                if os.path.exists(out) and os.path.getsize(out) > 1000:
+                    print(f"  ✓ 已存在，跳过: {Path(out).name}")
+                    image_map[i] = out
+                    results.append({"index": i, "prompt": prompt,
+                                    "path": out, "task_id": ""})
+                    continue
+                ok = self._qwen_submit_sync(prompt, out)
+                if ok:
+                    image_map[i] = out
+                    results.append({"index": i, "prompt": prompt,
+                                    "path": out, "task_id": ""})
+                else:
+                    self.failures.append(i)
+                    image_map[i] = None
+                if (i + 1) % batch_size == 0 and i < len(prompts) - 1:
+                    print(f"  ⏸ 暂停 3s 限速...")
+                    time.sleep(3)
+            success = sum(1 for v in image_map.values() if v is not None)
+            self.total_images += success
+            print(f"\n生图完成：成功 {success}/{len(prompts)}")
+            if self.failures:
+                print(f"  失败: {self.failures}")
+            return {"total": len(prompts), "success": success,
+                    "failures": self.failures, "image_map": image_map,
+                    "results": results}
 
         # 提交所有任务（逐个，控制并发）
         tasks = []
