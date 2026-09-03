@@ -221,13 +221,14 @@ def concat_with_ai_title(
     # 判断片头是否有音轨
     has_audio = any("Audio:" in l for l in probe.stderr.split("\n"))
     if has_audio:
-        # 片头原声 + 正片延迟：统一 24000 mono 后 concat
+        # 片头音效 + 正片配音：顺序 concat（片头 5s 音效后自然接配音）
+        # 注意：正片配音不要 adelay——concat 已把配音排到片头之后，
+        # 再 delay 会导致配音晚 5s 与字幕错位
         filt = (
             f"[0:v]setsar=1[tv];[1:v]setsar=1[mv];"
             f"[tv][mv]concat=n=2:v=1:a=0[v];"
             f"[0:a]aresample=24000,pan=mono|c0=c0[a0];"
-            f"[1:a]aresample=24000,pan=mono|c0=c0,"
-            f"adelay={delay_ms}|{delay_ms}[a1];"
+            f"[1:a]aresample=24000,pan=mono|c0=c0[a1];"
             f"[a0][a1]concat=n=2:v=0:a=1[a]"
         )
         a_map = "[a]"
