@@ -680,6 +680,7 @@ async function painAnalyze(){
       body: JSON.stringify({product})})).json();
     if(!r.ok){ $('painMsg').textContent = r.msg || '分析失败'; $('painResult').innerHTML=''; return; }
     $('painMsg').textContent = `✓ 完成（${r.episode_id || ''}），结构化结果已存 pain_points.json`;
+    window._lastPain = r.result;   // 供「生成带货脚本」衔接
     painRender(r.result);
   }catch(e){
     $('painMsg').textContent = '请求失败: ' + e.message;
@@ -721,7 +722,52 @@ function painRender(d){
     h += `<div style="margin-top:12px;color:#a35"><b>⚠️ 合规提示</b><div style="font-size:12px;margin-left:16px">${(d.compliance_notes||[]).map(esc).join('<br>')}</div></div>`;
   }
   h += `</div>`;
+  // 衔接：生成带货脚本（复用 AI 出稿面板）
+  h += `<div style="margin-top:14px;padding:12px;border:1px dashed #b8860b;border-radius:10px;background:#fffdf5">`;
+  h += `<div style="font-weight:600;margin-bottom:6px">📝 下一步：生成带货脚本</div>`;
+  h += `<div class="row" style="margin-bottom:8px"><label>目标人群</label><select id="painAudSel" style="flex:1">`;
+  (d.audiences||[]).forEach((a,i) => {
+    h += `<option value="${i}">${esc(a.name||'人群'+(i+1))}</option>`;
+  });
+  h += `<option value="-1">全部人群（综合带货）</option></select></div>`;
+  h += `<div class="row" style="margin-bottom:8px"><label>脚本时长</label><select id="painDurSel" style="flex:1">`;
+  h += `<option value="1">约 1 分钟（快节奏带货）</option><option value="2" selected>约 2 分钟（详细种草）</option><option value="3">约 3 分钟（深度测评）</option></select></div>`;
+  h += `<button class="primary" onclick="painToScript()">➡️ 生成带货脚本</button>`;
+  h += `<span class="hint" style="margin-left:8px">将跳转到 AI 出稿面板，指令已按所选人群填好</span></div>`;
   $('painResult').innerHTML = h;
+}
+
+function painToScript(){
+  const sel = $('painAudSel'); if(!sel) return;
+  const idx = parseInt(sel.value);
+  const d = window._lastPain || {};
+  const dur = ($('painDurSel')||{value:'2'}).value;
+  // 组装指令
+  let inst = '';
+  if(idx >= 0 && (d.audiences||[])[idx]){
+    const a = d.audiences[idx];
+    inst += `目标人群：${a.name}（${a.desc||''}）\n`;
+    inst += `他们的痛点：\n` + (a.pain_points||[]).map(p => `- ${p.pain}`).join('\n') + '\n';
+    // 该人群相关卖点
+    const maps = (d.mappings||[]).filter(m => m.audience === a.name);
+    if(maps.length){
+      inst += `对应卖点：\n` + maps.map(m => `- ${m.selling_point}`).join('\n') + '\n';
+    }
+  } else {
+    inst += '综合带货，覆盖以下人群与痛点：\n';
+    (d.audiences||[]).forEach(a => {
+      inst += `【${a.name}】${(a.pain_points||[]).map(p=>p.pain).join('；')}\n`;
+    });
+    inst += '对应卖点：\n' + (d.mappings||[]).map(m=>`- ${m.selling_point}`).join('\n') + '\n';
+  }
+  inst += '\n话术钩子参考：\n' + (d.hooks||[]).map((x,i)=>`${i+1}. ${x}`).join('\n');
+  inst += `\n\n请按上面的人群痛点写一条约 ${dur} 分钟的抖音带货口播脚本：开头用钩子抓人，中间逐条戳痛点再抛卖点，结尾给行动号召（引导下单/评论），口语化，有节奏感。`;
+  // 填到 AI 出稿面板并切换
+  const box = $('aiInstruction'); if(box) box.value = inst;
+  const ct = $('a_ctype'); if(ct) ct.value = '商品';
+  const dd = $('aiDuration'); if(dd) dd.value = dur;
+  switchView('ai');
+  $('aiGenHint').textContent = '指令已从痛点分析带入（商品类型），确认后点「生成稿子」';
 }
 
 </script>
