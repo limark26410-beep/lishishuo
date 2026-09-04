@@ -138,6 +138,10 @@
       <button class="side-item" data-view="voice" onclick="switchView('voice')"><span class="ic">🎙️</span>声音选择</button>
     </div>
     <div class="side-group">
+      <div class="group-title">营销（GL-20260904）</div>
+      <button class="side-item" data-view="pain" onclick="switchView('pain')"><span class="ic">🎯</span>痛点分析</button>
+    </div>
+    <div class="side-group">
       <div class="group-title">任务</div>
       <button class="side-item" data-view="progress" onclick="switchView('progress')"><span class="ic">📊</span>进度与日志</button>
     </div>
@@ -623,10 +627,104 @@
     <div id="dbRecent" style="margin-top:12px"></div>
   </div>
 
+  <!-- ── 痛点分析面板（GL-20260904 营销） ── -->
+  <div class="card view-panel" id="painPanel">
+    <div class="row">
+      <label>商品资料</label>
+      <textarea id="painProduct" rows="8" style="flex:1;font-size:13px"
+        placeholder="粘贴商品资料（名称/历史/卖点/价格/认证/获奖等，越详细分析越准）。&#10;&#10;示例：&#10;钟茂丰绍兴黄酒：始于清乾隆1738年，280年老字号，非遗古法手工冬酿，&#10;第八代传人钟大年(中传博导)、第九代钟亦鸣(牛津博士)重振，&#10;25年陈获英国IWSC国际银奖，产品线覆盖收藏级/品鉴级/佐餐小酒/文创礼盒"></textarea>
+    </div>
+    <div class="row">
+      <label>或读取文件</label>
+      <div class="flex">
+        <input type="text" id="painProductFile" placeholder="PDF/文档路径（如 /Users/xxx/Desktop/商品介绍.pdf）">
+        <button class="ghost" onclick="painReadFile()">读取文件内容</button>
+      </div>
+    </div>
+    <div class="row">
+      <button class="primary" onclick="painAnalyze()" id="painBtn">🎯 AI 痛点×卖点分析</button>
+      <span id="painMsg" class="hint" style="margin-left:10px"></span>
+    </div>
+    <div class="hint" style="margin-top:6px">AI 推理目标人群 → 场景化痛点(带强度) → 痛点×卖点映射 → 短视频话术钩子 → 合规提示。结果 JSON 存 episodes/&lt;期号&gt;/pain_points.json 供后续脚本生成复用</div>
+    <div id="painResult" style="margin-top:14px"></div>
+  </div>
+
   </main>
   </div><!-- /app-shell -->
 </div>
 
+<script>
+
+// ═══ 痛点分析（GL-20260904 营销）═══
+async function painReadFile(){
+  const p = ($('painProductFile')||{}).value || '';
+  if(!p){ $('painMsg').textContent = '请先填文件路径'; return; }
+  $('painMsg').textContent = '读取中…';
+  try{
+    const r = await (await fetch('/api/pain-read', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({path:p})})).json();
+    if(!r.ok){ $('painMsg').textContent = r.msg || '读取失败'; return; }
+    $('painProduct').value = r.text;
+    $('painMsg').textContent = `已读取 ${r.chars} 字，可编辑后分析`;
+  }catch(e){ $('painMsg').textContent = '请求失败: ' + e.message; }
+}
+
+async function painAnalyze(){
+  const product = $('painProduct').value.trim();
+  if(!product){ $('painMsg').textContent = '请先填商品资料（或读取文件）'; return; }
+  const btn = $('painBtn'); btn.disabled = true;
+  $('painMsg').textContent = 'AI 推理中（约 30-60s）…';
+  $('painResult').innerHTML = '<div class="hint">⏳ 正在分析用户痛点，请稍候…</div>';
+  try{
+    const r = await (await fetch('/api/pain-analyze', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({product})})).json();
+    if(!r.ok){ $('painMsg').textContent = r.msg || '分析失败'; $('painResult').innerHTML=''; return; }
+    $('painMsg').textContent = `✓ 完成（${r.episode_id || ''}），结构化结果已存 pain_points.json`;
+    painRender(r.result);
+  }catch(e){
+    $('painMsg').textContent = '请求失败: ' + e.message;
+    $('painResult').innerHTML = '';
+  }finally{ btn.disabled = false; }
+}
+
+function painRender(d){
+  if(!d) return;
+  const esc = s => (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  let h = '';
+  h += `<div style="border:1px solid #eee;border-radius:10px;padding:14px;background:#fafafa">`;
+  h += `<div style="font-size:16px;font-weight:600;margin-bottom:4px">🎯 ${esc(d.product||'商品')}</div>`;
+  // 人群与痛点
+  (d.audiences||[]).forEach(a => {
+    const color = {高:'#e05252', 中:'#e0a020', 低:'#7a9a5a'};
+    h += `<div style="margin-top:12px"><b>👥 ${esc(a.name||'')}</b> <span class="hint">${esc(a.desc||'')}</span></div>`;
+    (a.pain_points||[]).forEach(p => {
+      const c = color[p.intensity] || '#888';
+      h += `<div style="margin:4px 0 0 18px"><span style="color:#fff;background:${c};border-radius:4px;padding:0 6px;font-size:11px">${esc(p.intensity||'')}</span> <span>${esc(p.pain||'')}</span></div>`;
+    });
+  });
+  // 映射
+  if((d.mappings||[]).length){
+    h += `<div style="margin-top:14px"><b>🔗 痛点 → 卖点映射</b></div>`;
+    (d.mappings||[]).forEach(m => {
+      h += `<div style="margin:4px 0 0 18px;font-size:13px"><span style="color:#b8860b">▸ ${esc(m.pain||'')}</span><br><span style="color:#555;margin-left:16px">→ ${esc(m.selling_point||'')}</span></div>`;
+    });
+  }
+  // 钩子
+  if((d.hooks||[]).length){
+    h += `<div style="margin-top:14px"><b>🎬 话术钩子（可直接口播）</b></div>`;
+    (d.hooks||[]).forEach((x,i) => {
+      h += `<div style="margin:4px 0 0 18px;font-size:13px;background:#fff8e6;border-left:3px solid #e0a020;padding:6px 10px;border-radius:0 6px 6px 0">${i+1}. ${esc(x)}</div>`;
+    });
+  }
+  // 合规
+  if((d.compliance_notes||[]).length){
+    h += `<div style="margin-top:12px;color:#a35"><b>⚠️ 合规提示</b><div style="font-size:12px;margin-left:16px">${(d.compliance_notes||[]).map(esc).join('<br>')}</div></div>`;
+  }
+  h += `</div>`;
+  $('painResult').innerHTML = h;
+}
+
+</script>
 <script>
 function $(id){ return document.getElementById(id); }
 
@@ -639,6 +737,7 @@ const _VIEWS = {
   progress:  'progressPanel',
   settings:  'settingsPanel',
   dropbox:   'dropboxPanel',
+  pain:      'painPanel',
 };
 function switchView(name){
   Object.entries(_VIEWS).forEach(([k, panelId]) => {
