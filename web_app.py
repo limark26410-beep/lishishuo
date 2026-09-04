@@ -875,62 +875,6 @@ class Handler(BaseHTTPRequestHandler):
         n = int(self.headers.get("Content-Length", 0))
         data = json.loads(self.rfile.read(n) or "{}")
 
-        if u.path == "/api/pain-analyze":
-            """GL-20260904：AI 痛点×卖点分析（营销）"""
-            if TASK["running"]:
-                return self._json({"ok": False, "msg": "已有任务在跑，请先等它完成"})
-            product = (data.get("product") or "").strip()
-            if not product:
-                return self._json({"ok": False, "msg": "请先填商品资料"})
-            env_path = BASE_DIR / ".env"
-            api_key = ""
-            if env_path.exists():
-                for ln in env_path.read_text(encoding="utf-8").splitlines():
-                    if ln.strip().startswith("DEEPSEEK_API_KEY"):
-                        api_key = ln.split("=", 1)[-1].strip()
-                        break
-            if not api_key:
-                return self._json({"ok": False, "msg": "未配置 DEEPSEEK_API_KEY，请到高级设置里填写"})
-            try:
-                sys.path.insert(0, str(BASE_DIR / "lib"))
-                from analyze_pain_points import analyze
-                result = analyze(product)
-            except Exception as e:
-                return self._json({"ok": False, "msg": f"分析失败: {str(e)[:200]}"})
-            # 存结构化结果：营销项目目录 products/pain_<时间戳>.json
-            mk = BASE_DIR / "products"
-            mk.mkdir(parents=True, exist_ok=True)
-            fname = f"pain_{time.strftime('%Y%m%d_%H%M%S')}.json"
-            (mk / fname).write_text(
-                json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
-            log(f"✓ AI 痛点分析: {result.get('product', '?')} → products/{fname}")
-            return self._json({"ok": True, "result": result,
-                               "episode_id": fname.replace('.json', '')})
-
-        if u.path == "/api/pain-read":
-            """读取商品资料文件（txt/docx/pdf 文本提取）"""
-            path = (data.get("path") or "").strip()
-            if not path or not os.path.exists(path):
-                return self._json({"ok": False, "msg": "文件不存在"})
-            try:
-                p = Path(path)
-                ext = p.suffix.lower()
-                if ext == ".docx":
-                    text = _docx_to_text(p)
-                elif ext == ".pdf":
-                    import pypdf
-                    text = "\n".join(pg.extract_text() or ""
-                                     for pg in pypdf.PdfReader(str(p)).pages)
-                else:
-                    text = p.read_text(encoding="utf-8", errors="ignore")
-                if not text:
-                    text = ""
-            except Exception as e:
-                return self._json({"ok": False, "msg": f"读取失败: {str(e)[:150]}"})
-            if not text.strip():
-                return self._json({"ok": False, "msg": "未提取到文本（可能是扫描件/图片型 PDF）"})
-            return self._json({"ok": True, "text": text[:8000], "chars": len(text)})
-
         if u.path == "/api/check-script":
             path = data.get("path", "")
             if not os.path.exists(path):
