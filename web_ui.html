@@ -119,6 +119,20 @@
     .main { padding: 16px 14px 50px; }
   }
 </style>
+<style>
+  /* ── GL-20260904 UI 视觉增强（仅样式补丁，不动任何逻辑）── */
+  .card { box-shadow: 0 2px 14px rgba(0,0,0,.22); transition: border-color .2s; }
+  .card:hover { border-color: #463c2e; }
+  .side-item { border-radius: 6px; margin: 1px 8px; transition: background .15s; }
+  .side-item.active { border-left: 3px solid #d4af37; }
+  button { transition: filter .15s, transform .05s; }
+  button:active:not(:disabled) { transform: scale(.98); }
+  input:focus, select:focus, textarea:focus { box-shadow: 0 0 0 3px rgba(212,175,55,.14); }
+  ::-webkit-scrollbar { width: 9px; height: 9px; }
+  ::-webkit-scrollbar-thumb { background: #332b20; border-radius: 5px; }
+  ::-webkit-scrollbar-thumb:hover { background: #4a4136; }
+  ::-webkit-scrollbar-track { background: transparent; }
+</style>
 </head>
 <body>
 <div class="wrap">
