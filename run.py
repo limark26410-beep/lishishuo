@@ -202,16 +202,31 @@ def _encode_args(cfg: dict, final: bool = False) -> list:
 def _align_subtitles(episode_dir: str, subs_srt: str, audio_path: str, canvas):
     """字幕 ASR 校正（真实音频对齐）。失败返回原 srt 路径，不阻断出片。"""
     # 回滚：删除本函数及两处调用（"字幕 ASR 校正"）即恢复 edge-tts 原字幕
+    # GL-20260910：subs_srt 可能为 None（skip-tts 且原字幕缺失）→ 回退到目录内已有字幕
+    if not subs_srt or not os.path.exists(subs_srt):
+        for _c in ("subs.srt", "subs_processed.srt", "subs_aligned.srt"):
+            _p = os.path.join(episode_dir, _c)
+            if os.path.exists(_p) and os.path.getsize(_p) > 0:
+                subs_srt = _p
+                break
+        else:
+            raise RuntimeError(
+                f"找不到字幕文件（{episode_dir}）：请先跑一次完整流水线生成字幕")
     try:
         from srt_align import align_srt
         _align_out = _cv_path(episode_dir, "subs_aligned.srt", canvas)
-        align_srt(
+        ret = align_srt(
             srt_path=subs_srt,
             audio_path=audio_path,
             script_path=os.path.join(episode_dir, "script.txt"),
             output_path=_align_out,
         )
-        return _align_out
+        # GL-20260910 修复：align_srt 在 ASR 失败时返回入参 srt_path（原字幕），
+        # 旧代码无视返回值直接 return _align_out，导致后续读不存在的 aligned 文件崩溃。
+        for cand in (ret, _align_out, subs_srt):
+            if cand and os.path.exists(cand) and os.path.getsize(cand) > 0:
+                return cand
+        return subs_srt
     except Exception as _e:  # noqa: BLE001
         print(f"  ⚠ 字幕 ASR 校正失败（{type(_e).__name__}: {str(_e)[:120]}），保留原字幕")
         return subs_srt
@@ -327,19 +342,31 @@ def step_image_gen(episode_dir: str, cfg: dict) -> dict:
         print(f"  ⚠ 提示词数量 ({len(all_prompts)}) 超过上限 ({max_images})，截断")
         all_prompts = all_prompts[:max_images]
 
-    from tongyi_api import TongyiImageGen
-    api_key = os.environ.get("DASHSCOPE_API_KEY", "")
-    # GL-20260902：模型/尺寸从 config 读（默认 wanx2.1-t2i-turbo，
-    # 可切 qwen-image-3.0 等——qwen-image 系列走同步接口有免费额度）
-    _tcfg = img_cfg.get("tongyi", {})
-    client = TongyiImageGen(api_key=api_key,
-                            model=_tcfg.get("model", ""),
-                            size=_tcfg.get("size", ""))
+    # 生图源：GL-20260909 支持智谱 CogView-4（免费额度）与通义 wanx
+    # config image.provider: "zhipu"（默认）| "tongyi"
+    _provider = img_cfg.get("provider", "zhipu")
+    _img_api_key = os.environ.get("ZHIPU_API_KEY", "") if _provider == "zhipu" \
+        else os.environ.get("DASHSCOPE_API_KEY", "")
+
+    if _provider == "zhipu":
+        from zhipu_api import ZhipuImageGen
+        _tcfg = img_cfg.get("zhipu", {})
+        client = ZhipuImageGen(api_key=_img_api_key,
+                               model=_tcfg.get("model", ""),
+                               size=_tcfg.get("size", ""))
+        print(f"  ▶ 生图源: 智谱 CogView-4（免费额度）")
+    else:
+        from tongyi_api import TongyiImageGen
+        _tcfg = img_cfg.get("tongyi", {})
+        client = TongyiImageGen(api_key=_img_api_key,
+                                model=_tcfg.get("model", ""),
+                                size=_tcfg.get("size", ""))
+        print(f"  ▶ 生图源: 通义 wanx")
 
     result = client.batch_generate(
         prompts=[p["prompt"] for p in all_prompts],
         output_dir=images_dir,
-        batch_size=_tcfg.get("batch_size", 5),
+        batch_size=_tcfg.get("batch_size", 1),
     )
     result["prompts_meta"] = all_prompts
     return result
@@ -1287,9 +1314,17 @@ def main():
                     print("  VTT→SRT 转换...")
                     vtt_to_srt(sv, ss)
                 print(f"  ⏩ 使用已有音频: {dur:.1f}s")
+                # GL-20260910：subs.srt 缺失时回退到已处理字幕，避免下游拿到 None 崩溃
+                _cand = ss if os.path.exists(ss) else None
+                if not _cand:
+                    for _c in ("subs_processed.srt", "subs_aligned.srt"):
+                        _p = os.path.join(episode_dir, _c)
+                        if os.path.exists(_p) and os.path.getsize(_p) > 0:
+                            _cand = _p
+                            break
                 return {
                     "audio_path": ap, "subs_path": sv,
-                    "subs_srt": ss if os.path.exists(ss) else None,
+                    "subs_srt": _cand,
                     "duration_sec": dur,
                 }
             raise RuntimeError("--skip-tts 但未找到 audio.mp3")

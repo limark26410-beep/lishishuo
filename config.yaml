@@ -30,8 +30,7 @@ image:
   style_anchor: 中国古风，水墨质感，纪录片氛围，无文字，场景宏大，写意风格
   tongyi:
     api_base: https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis
-    # GL-20260902：qwen-image-3.0 走同步接口（有免费额度）；wanx2.1-t2i-turbo 为旧异步引擎
-    model: qwen-image-3.0
+    model: wanx2.1-t2i-turbo
     size: 1080*1440
     batch_size: 3
     max_retries: 3
@@ -40,6 +39,10 @@ image:
   cost_guard:
     max_images_per_episode: 50
     log_file: logs/image_costs.csv
+  zhipu:
+    model: wanx2.1-t2i-turbo
+    size: 1080*1440
+    batch_size: 1
 video:
   width: 1080
   height: 1920
