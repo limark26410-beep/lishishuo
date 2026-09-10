@@ -587,18 +587,20 @@ def step_mix(episode_dir: str, tts_result: dict, img_result: dict, cfg: dict, ca
 
     # ── 3g.5 关键词字卡叠加（升级：句级关键词金字浮现）──
     # 回滚：删除本段（3g.5 到 END 3g.5）即恢复纯字幕
-    try:
-        from keyword_cards import overlay_keyword_cards
-        _cards_out = _cv_path(episode_dir, "_burned_cards.mp4", canvas)
-        overlay_keyword_cards(
-            video_path=burned,
-            srt_path=processed_srt,
-            output_path=_cards_out,
-            encode_args=_encode_args(cfg, final=False),
-        )
-        burned = _cards_out
-    except Exception as _e:  # noqa: BLE001
-        print(f"  ⚠ 关键词字卡叠加失败（{type(_e).__name__}: {_e}），跳过")
+    # GL-20260910：加 config 开关 keyword_cards.enabled（默认关），避免弹出不合适的字卡
+    if (cfg.get("keyword_cards", {}) or {}).get("enabled", False):
+        try:
+            from keyword_cards import overlay_keyword_cards
+            _cards_out = _cv_path(episode_dir, "_burned_cards.mp4", canvas)
+            overlay_keyword_cards(
+                video_path=burned,
+                srt_path=processed_srt,
+                output_path=_cards_out,
+                encode_args=_encode_args(cfg, final=False),
+            )
+            burned = _cards_out
+        except Exception as _e:  # noqa: BLE001
+            print(f"  ⚠ 关键词字卡叠加失败（{type(_e).__name__}: {_e}），跳过")
     # ── END 3g.5 ──
 
     # ── 3h. 片头 overlay ──
