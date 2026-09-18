@@ -23,6 +23,7 @@
 import os
 import sys
 import json
+import re
 import time
 import shutil
 import subprocess
@@ -76,6 +77,26 @@ def _deep_merge(base: dict, override: dict) -> None:
             _deep_merge(base[k], v)
         else:
             base[k] = v
+
+
+def _strip_script_title(text: str) -> str:
+    """去掉稿子第一行标题（"系列 第N期 人名·别称"），让配音不念标题。
+
+    规则：仅当「第一个非空行」含「第N期」字样才删（避免误删正文首段）；
+    其余行原样保留。返回删后文本；未命中则原样返回。
+    """
+    lines = text.splitlines()
+    out: list = []
+    skipped = False
+    for line in lines:
+        if not skipped and line.strip():
+            if re.search(r"第\s*\d+\s*期", line):
+                skipped = True
+                continue
+        out.append(line)
+    if not skipped:
+        return text
+    return "\n".join(out).strip() + "\n"
 
 
 def _tag_emotions_safe(segments: list):
@@ -252,12 +273,25 @@ def step_tts(episode_dir: str, cfg: dict) -> dict:
     tts_cfg = cfg.get("tts", {})
     engine = tts_cfg.get("engine", "edge")  # edge | doubao
 
+    # GL-202610：配音不念标题——去掉稿子第一行「系列 第N期 人名·别称」
+    # 只影响 TTS 朗读与字幕（二者同源），script.txt 原文保留，片头标题走 --title。
+    tts_script_path = script_path
+    if tts_cfg.get("skip_title"):
+        with open(script_path, encoding="utf-8") as f:
+            _raw = f.read()
+        _stripped = _strip_script_title(_raw)
+        if _stripped != _raw:
+            tts_script_path = os.path.join(episode_dir, "script_tts.txt")
+            with open(tts_script_path, "w", encoding="utf-8") as f:
+                f.write(_stripped)
+            print(f"  ▶ 配音跳过标题行：script.txt → script_tts.txt（字幕与录音同步去标题）")
+
     # GL-20260817-05 5b-3：段落级语速——配置 tts.emotion_rates 时按段落分次 TTS
     emotion_rates = tts_cfg.get("emotion_rates") or {}
     if emotion_rates and engine == "edge":
         from script_seg import split_segments
         from emotion_tag import tag_emotions
-        with open(script_path, encoding="utf-8") as f:
+        with open(tts_script_path, encoding="utf-8") as f:
             body = f.read()
         segments = split_segments(body)
         emotions = tag_emotions(segments, os.environ.get("DEEPSEEK_API_KEY", ""))
@@ -282,7 +316,7 @@ def step_tts(episode_dir: str, cfg: dict) -> dict:
         rate = tts_cfg.get("rate", "-4%")
         try:
             result = generate_tts_doubao(
-                script_path=script_path,
+                script_path=tts_script_path,
                 output_audio=audio_path,
                 output_subs=subs_vtt,
                 voice=voice,
@@ -301,7 +335,7 @@ def step_tts(episode_dir: str, cfg: dict) -> dict:
                     os.remove(p)
 
     result = generate_tts(
-        script_path=script_path,
+        script_path=tts_script_path,
         output_audio=audio_path,
         output_subs=subs_vtt,
         voice=tts_cfg.get("voice", "zh-CN-YunjianNeural"),

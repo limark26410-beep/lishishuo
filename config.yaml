@@ -21,6 +21,7 @@ tts:
   rate_manual: true
   subtitle_format: vtt
   emotion_rates: {}
+  skip_title: true
 ai_script:
   style_enabled: true
 image:
