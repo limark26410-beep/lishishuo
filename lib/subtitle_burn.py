@@ -22,6 +22,22 @@ BAR_HEIGHT = 300
 OUTLINE_W = 3
 PUNCTS = set('\uff0c\u3002\uff01\uff1f\u3001\uff1b\uff1a')
 
+# 禁拆词表：折行时不得在词中间断行（十大谋士系列人名/成语/CTA 用语）
+# 按长度降序匹配，避免"手无缚鸡之力"被"之力"这类短词抢先命中
+NO_SPLIT_TERMS = sorted(set([
+    # 系列与 CTA 用语
+    "完整合集", "关注不迷路", "十大谋士", "下期预告", "评论区",
+    "不迷路",
+    # 人物（十大谋士 + 常见相关人名）
+    "姜子牙", "管仲", "张良", "诸葛亮", "范蠡", "郭嘉", "荀彧",
+    "王猛", "刘伯温", "姚广孝", "齐桓公", "鲍叔牙", "刘邦",
+    "周文王", "姜尚", "周武王", "曹操", "刘备", "孙权",
+    # 常见四字成语 / 别称
+    "运筹帷幄", "手无缚鸡之力", "出师未捷", "功成身退", "王佐之才",
+    "功盖诸葛", "一统江山", "黑衣宰相", "愿者上钩", "鬼才早逝",
+    "决胜千里", "鞠躬尽瘁", "死而后已", "三顾茅庐",
+]), key=len, reverse=True)
+
 
 def _pick_font(sub: dict) -> str:
     """按平台优先顺序选第一个存在的字体（三平台）"""
@@ -76,9 +92,27 @@ def _wrap_text(text: str, max_chars: int = None) -> str:
     return _split_balanced(text, mc)
 
 
+def _find_safe_cut(text: str, lo: int, hi: int) -> int:
+    """在 [lo, hi] 内找最佳硬断点：优先靠近中点，且不切开禁拆词（人名/成语/CTA）。"""
+    spans = []
+    for term in NO_SPLIT_TERMS:
+        start = 0
+        while True:
+            i = text.find(term, start)
+            if i < 0:
+                break
+            spans.append((i, i + len(term)))
+            start = i + 1
+    mid = (lo + hi) / 2.0
+    for cut in sorted(range(lo, hi + 1), key=lambda c: abs(c - mid)):
+        if not any(s < cut < e for s, e in spans):
+            return cut
+    return hi
+
+
 def _split_balanced(text: str, per_line: int) -> str:
     """
-    在标点处靠近中点断行；找不到合适标点就硬断。
+    在标点处靠近中点断行；找不到合适标点就硬断（避开禁拆词）。
     硬性保证：每行长度 <= per_line。
     """
     if len(text) <= per_line:
@@ -99,8 +133,10 @@ def _split_balanced(text: str, per_line: int) -> str:
     if best:
         return f"{text[:best]}\n{text[best:]}"
 
-    # 没有合适标点：在 per_line 处硬断（两行都不超限）
-    cut = min(per_line, len(text) - 1)
+    # 没有合适标点：找不拆词的硬断点（两行都不超限）
+    lo = max(1, len(text) - per_line)
+    hi = min(per_line, len(text) - 1)
+    cut = _find_safe_cut(text, lo, hi)
     first, second = text[:cut], text[cut:]
     if len(second) > per_line:
         second = second[:per_line]      # 理论上不会走到，防御性截断
@@ -128,9 +164,9 @@ def _split_long_text(text: str, max_chars: int) -> list:
             if window[i] in PUNCTS:
                 cut = i + 1
                 break
-        # 标点太靠前（小于一半）就不用，改硬拆，避免碎块
+        # 标点太靠前（小于一半）就不用，改硬拆，避免碎块；硬拆也避开禁拆词
         if cut < max_chars // 2:
-            cut = max_chars
+            cut = _find_safe_cut(rest, max_chars // 2, max_chars)
         chunks.append(rest[:cut])
         rest = rest[cut:]
     if rest:
