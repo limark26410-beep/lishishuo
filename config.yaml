@@ -79,7 +79,7 @@ video:
   encoder_options:
     libx264:
       crf: 26
-      preset: medium
+      preset: veryfast
     h264_videotoolbox:
       bitrate: 3000k
   audio_codec: aac
