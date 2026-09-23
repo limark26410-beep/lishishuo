@@ -7,6 +7,17 @@
 | **历史说**（纪录片式） | `run.py` | 文史口播/旁白 + 生图 + 字幕 | 输入 script.txt + prompts.json |
 | **白酒短剧**（人物对话式） | `run_baijiu.py` | AI 视频 + 多角色配音 + 对话字幕 | 输入 project.json |
 
+### 需要的 API Key（谁用谁注册，各填各的）
+
+| Key | 干什么 | 去哪注册 | 用到 |
+|-----|--------|---------|------|
+| `DASHSCOPE_API_KEY` | AI 生图 / 图生视频 | 阿里云百炼 bailian.console.aliyun.com | 历史说 |
+| `DEEPSEEK_API_KEY` | 写稿 / 提示词 | platform.deepseek.com | 两者 |
+| `ZHIPU_API_KEY` | AI 视频（文生视频） | open.bigmodel.cn | 白酒 |
+| `DOUBAO_TTS_KEY` | 配音（可多角色） | console.volcengine.com（语音合成） | 两者 |
+| `ARK_API_KEY` | 豆包大模型（备用） | console.volcengine.com/ark | 可选 |
+| `PEXELS_API_KEY` | 抓视频/图片素材 | pexels.com/api | 可选 |
+
 ---
 
 ## 同事上手（5 分钟）
