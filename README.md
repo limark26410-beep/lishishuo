@@ -1,70 +1,110 @@
-# 文史长音频自动化流水线
+# 历史说 · 出片工具
 
-输入 script.txt + prompts.json → 输出 final.mp4（配音 + 生图 + 字幕 + 背景乐）
+两条出片流程，一个仓库搞定：
 
-## 快速开始
+| 流程 | 入口命令 | 用途 | 说明 |
+|------|---------|------|------|
+| **历史说**（纪录片式） | `run.py` | 文史口播/旁白 + 生图 + 字幕 | 输入 script.txt + prompts.json |
+| **白酒短剧**（人物对话式） | `run_baijiu.py` | AI 视频 + 多角色配音 + 对话字幕 | 输入 project.json |
+
+---
+
+## 同事上手（5 分钟）
 
 ```bash
-# 1. 安装依赖
-pip3 install pyyaml requests edge-tts
-# 服务器: bash setup_server.sh
+# 1. 克隆
+git clone https://github.com/limark26410-beep/lishishuo.git
+cd lishishuo
 
-# 2. 配 API Key
-export DASHSCOPE_API_KEY=sk-xxx
+# 2. 装依赖
+python3 -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+# 另需安装真实版 ffmpeg（brew install ffmpeg）
 
-# 3. 跑一期
-python3 run.py --episode 001
+# 3. 填你自己的 API Key（谁用谁注册，各填各的，不共耗账号）
+cp .env.example .env
+# 编辑 .env，填 6 个 key（文件里有每个 key 的注册地址）
+
+# 4. 改素材库路径（可选，默认 ~/Desktop/历史说素材）
+# 方法A：改 config.yaml 的 paths.material_root
+# 方法B：export LISHISHUO_MATERIAL_ROOT=/你的素材库路径
+
+# 5. 跑
+./venv/bin/python run.py --episode 001                       # 历史说
+./venv/bin/python run_baijiu.py ~/Desktop/白酒短剧/清引_第1集   # 白酒短剧
 ```
+
+---
+
+## 一、历史说流程（纪录片式）
+
+输入 `episodes/{期号}/script.txt` + `prompts.json` → 输出 `final.mp4`（配音 + 生图 + Ken Burns + 字幕 + 配乐 + 片头）。
+
+```bash
+./venv/bin/python run.py --episode 001
+./venv/bin/python run.py --episode 001 --dry-run          # 检查素材
+./venv/bin/python run.py --episode 001 --skip-tts         # 跳过配音（重跑混剪）
+./venv/bin/python run.py --episode 001 --skip-images      # 跳过生图（重跑混剪）
+```
+
+常用参数：`--title 主·副 --series 系列名 --name 归档名 --canvas portrait --rate -4%`。
+
+## 二、白酒短剧流程（人物对话式）
+
+一个项目目录 = 一集对话短片。目录里放一个 `project.json`：
+
+```json
+{
+  "title": "清引",
+  "series": "白酒酿造短剧 · 清香地缸之源",
+  "bgm": true,
+  "scenes": [
+    {"role": "沈清", "voice": "zh_female_vv_uranus_bigtts", "rate": 0,
+     "text": "这酒，怎么浑成这样？",
+     "prompt": "北宋古装……沈清尝酒皱眉……"}
+  ]
+}
+```
+
+一条命令跑完三步（智谱生视频 → 豆包多角色配音 → 拼装）：
+
+```bash
+./venv/bin/python run_baijiu.py ~/Desktop/白酒短剧/清引_第1集
+# 免费档 cogvideox-flash（5s/段）；付费档：加参数 cogvideox-3（10s/段）
+```
+
+**豆包音色**（可换 `voice`）：`zh_female_vv_uranus_bigtts`（vivi 女）、`zh_male_dayi_saturn_bigtts`（大壹 男）、`zh_male_ruyayichen_saturn_bigtts`（儒雅逸辰 男）、`zh_female_gaolengyujie_uranus_bigtts`（高冷御姐 女）等 8 个。
+
+---
 
 ## 目录结构
 
 ```
-/pipeline
-  config.yaml              # 全配置（编码器/转场/字幕字体等）
-  run.py                   # 主编排脚本
-  setup_server.sh          # 生产服务器一键初始化
-  assets/bgm.mp3           # 背景音乐
-  episodes/
-    {期号}/
-      script.txt           # 终审定稿（输入）
-      prompts.json          # 分板块绘画提示词（输入）
-      audio.mp3            # TTS 音频（自动生成）
-      subs.srt             # 字幕（自动生成）
-      images/              # 生图（用完可删）
-      clips/               # Ken Burns 片段（用完可删）
-      final.mp4            # 成品（输出）
-  lib/
-    tts_utils.py           # edge-tts 封装
-    tongyi_api.py          # 通义万相 API 客户端
-    ffmpeg_utils.py        # FFmpeg 封装（Ken Burns / 拼接 / 混音 / 烧字幕）
+lishishuo/
+  config.yaml              # 全配置（含 paths.material_root、编码器、字幕字体）
+  run.py                   # 历史说主流程
+  run_baijiu.py            # 白酒短剧流程
+  .env.example             # 密钥模板（复制为 .env 填自己的 key）
+  assets/bgm*.mp3          # 背景音乐
+  episodes/{期号}/         # 历史说每期（script.txt + prompts.json → final.mp4）
+  lib/                     # 工具库（tts/生图/视频/字幕/路径）
+  tools/                   # 批量出片脚本（十大谋士/女将等）
 ```
 
 ## 配置要点
 
-| 配置项 | 生产（Linux） | 开发（macOS） |
-|--------|-------------|-------------|
-| encoder | `libx264`（默认） | `h264_videotoolbox`（auto 自动切） |
-| preset | `medium`（默认） | 同上 |
-| transition | `concat`（硬切，默认） | 同上 |
-| subtitle font | `Noto Sans CJK SC` | `AdobeHeitiStd-Regular` |
+| 配置项 | 说明 |
+|--------|------|
+| `paths.material_root` | 素材库根目录（共享空镜/片头背景/bgm/归档），可改 |
+| `image.provider` | `tongyi`（通义万相 wanx） / `zhipu`（智谱） |
+| `tts.engine` | `edge`（微软） / `doubao`（豆包，更自然） |
+| `video.encoder` | `libx264` / `h264_videotoolbox` / `auto` |
 
 ## 状态
 
-- ✅ 配音（edge-tts，YunjianNeural，-4%）
-- ✅ 字幕（VTT→SRT 自动转换）
-- ✅ Ken Burns 动效（zoompan 慢推近）
-- ✅ 视频拼接（concat 硬切秒出 / xfade 交叉溶解）
-- ✅ 混音（配音 + 背景乐）
-- ✅ 通义万相 API（异步提交+轮询+重试+断点续跑）
-- ✅ 并行 TTS+生图
-- 🟡 烧字幕（需 ffmpeg --enable-libass）
-- 🟡 真实生图（需 DASHSCOPE_API_KEY）
-
-## CLI
-
-```bash
-python3 run.py --episode 001              # 正常运行
-python3 run.py --episode 001 --dry-run    # 检查素材
-python3 run.py --episode 001 --skip-tts   # 跳过配音（重跑混剪）
-python3 run.py --episode 001 --skip-images --no-cleanup  # 跳过生图（重跑混剪）
-```
+- ✅ 配音（edge-tts / 豆包多角色）
+- ✅ 字幕（自动折行、断词保护）
+- ✅ 生图（通义万相 / 智谱）+ Ken Burns
+- ✅ AI 视频（智谱 CogVideoX，免费/付费档）
+- ✅ 片头 + 配乐 + 归档
+- 🟡 对口型（需可灵/即梦，另配）
