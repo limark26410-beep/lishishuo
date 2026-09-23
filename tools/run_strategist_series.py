@@ -9,12 +9,15 @@
 import json, os, re, shutil, subprocess, sys, time
 from pathlib import Path
 
-ROOT = Path("/Users/local/lishishuo")
+# 仓库根自动定位（本脚本在 tools/ 下，上溯一级）+ 素材库路径可配置
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "lib"))
+from paths import shared_scenery_dir, title_bg_dir, series_dir  # noqa: E402
+
 VENV = str(ROOT / "venv" / "bin" / "python")
-DESK = Path(os.path.expanduser("~/Desktop"))
-SHARED = DESK / "历史说素材" / "共享空镜"
-BGTMP = DESK / "历史说素材" / "片头背景"
-SERIES = DESK / "历史说素材" / "十大谋士"
+SHARED = shared_scenery_dir()
+BGTMP = title_bg_dir()
+SERIES = series_dir("十大谋士")
 TOTAL_IMAGES = 24          # 每期总图数（与第1/2期一致）
 FRESH_N = 16               # 每期新鲜生图数（省预算，其余用共享空镜补齐）
 
