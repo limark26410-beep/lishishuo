@@ -365,6 +365,12 @@ _DOUBAO_MAX_CHARS = 500
 
 
 def _doubao_api_key() -> str:
+    # 兜底：从 .env 加载密钥（同事各填各的 key，无需 export）
+    try:
+        from paths import load_env
+        load_env()
+    except Exception:
+        pass
     key = os.environ.get("DOUBAO_TTS_KEY", "").strip()
     if not key:
         raise RuntimeError("未配置 DOUBAO_TTS_KEY（豆包语音 API Key），请在 .env 填写")

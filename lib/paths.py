@@ -42,6 +42,25 @@ def material_root() -> Path:
     return _DEFAULT.expanduser()
 
 
+def load_env() -> None:
+    """把 .env 里的 KEY=VALUE 加载进 os.environ（已存在的环境变量不覆盖）。
+
+    所有脚本在用到 API Key 前调用一次，即可统一从 .env 读密钥——
+    同事只需复制 .env.example 为 .env 填自己的 key，无需 export。
+    """
+    env_path = REPO_ROOT / ".env"
+    if not env_path.exists():
+        return
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        k, v = k.strip(), v.strip()
+        if k and k not in os.environ:
+            os.environ[k] = v
+
+
 def shared_scenery_dir() -> Path:
     return material_root() / "共享空镜"
 

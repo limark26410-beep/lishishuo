@@ -8,9 +8,10 @@ cogvideox-flash 免费 / cogvideox-3 1元/次(10s 最高4K)
 import sys, os, json, time
 import requests
 
-KEY = os.environ.get("ZHIPU_API_KEY", "") or open(
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env"),
-    encoding="utf-8").read().split("ZHIPU_API_KEY=")[1].splitlines()[0].strip()
+# 统一从 .env 读密钥（同事各填各的 key）
+from paths import load_env
+load_env()
+KEY = os.environ.get("ZHIPU_API_KEY", "")
 
 SUBMIT_URL = "https://open.bigmodel.cn/api/paas/v4/videos/generations"
 RESULT_URL = "https://open.bigmodel.cn/api/paas/v4/async-result/{}"
