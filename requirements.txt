@@ -1,8 +1,10 @@
 # 历史说 · 出片工具 依赖清单（同事安装兜底：pip install -r requirements.txt）
-# 启动脚本会自动安装，此文件供手动/排查使用
+# 历史说主流程 + 白酒短剧流程 + 批量脚本都用这套
 pyyaml
 pillow
 edge-tts
 requests
 python-docx
 aiohttp
+numpy
+openpyxl
