@@ -34,6 +34,21 @@
 > **零成本跑通**：智谱 `flash` + edge-tts + Pexels，一分钱不花。
 > **要花钱的三处**：阿里云生图（历史说批量生图大头）、智谱 `cogvideox-3`（要画质）、可灵/即梦对口型（要嘴型）。
 
+### 本地素材（省掉线上生图）
+
+历史说流程**有本地素材就直接用本地，不花生图钱**：
+
+```bash
+# 本地图片（跳过线上生图）
+./venv/bin/python run.py --episode 001 --images-dir /你的图片目录
+
+# 本地视频素材（走视频混剪，不生成图片）
+./venv/bin/python run.py --episode 001 --video-dir /你的视频素材库
+
+# 或者手动把图片放进 episodes/001/images/，然后 --skip-images
+./venv/bin/python run.py --episode 001 --skip-images
+```
+
 ---
 
 ## 同事上手（5 分钟）

@@ -1370,6 +1370,25 @@ def main():
         if video_mode:
             # 视频模式不生成图片（step_mix 走视频分支，不读 image_map）
             return {"image_map": {}, "prompts_meta": []}
+        # GL-20260923：本地图片目录（有素材就直接用，不线上生图）
+        if getattr(args, "images_dir", None):
+            d = os.path.expanduser(args.images_dir)
+            if not os.path.isdir(d):
+                raise RuntimeError(f"--images-dir 目录不存在: {d}")
+            existing = sorted([
+                os.path.join(d, f) for f in os.listdir(d)
+                if f.lower().endswith((".jpg", ".png", ".jpeg"))
+            ])
+            if not existing:
+                raise RuntimeError(f"--images-dir 目录无图片: {d}")
+            if getattr(args, "shuffle_images", False):
+                import random as _rd
+                seed = getattr(args, "name", None) or args.episode
+                _rd.Random(str(seed)).shuffle(existing)
+                print(f"  🔀 图片已按本期随机打乱")
+            print(f"  🖼 使用本地图片: {len(existing)} 张（不线上生图）")
+            return {"image_map": {i: p for i, p in enumerate(existing)},
+                    "prompts_meta": []}
         if args.skip_images:
             d = os.path.join(episode_dir, "images")
             if os.path.exists(d):
