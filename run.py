@@ -1573,8 +1573,41 @@ def main():
         tc_dur = int(cfg.get("title_card", {}).get("duration", 3))
         shots = make_review_pack(final_path, review_dir, title_duration=tc_dur)
         print(f"  ✓ {len(shots)} 张截图 -> {review_dir}")
+
+        # 字幕音画同步自动校验（独立复核：拿成片音频反查烧进去的字幕时间）
+        # GL-20260911：字幕滞后/某条只闪一下，肉眼要拖动才发现，这里自动兜住。
+        try:
+            _vs = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "scripts", "verify_sync.py")
+            _srt = None
+            for _c in ("subs_processed.srt", "subs_aligned.srt"):
+                _p = os.path.join(episode_dir, _c)
+                if os.path.exists(_p) and os.path.getsize(_p) > 0:
+                    _srt = _p
+                    break
+            sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
+            import srt_align as _sa
+            # 校验对象取竖屏成片（dual 模式下 final_path 可能是横屏版）
+            _mp4 = os.path.join(episode_dir, "final.mp4")
+            if not os.path.exists(_mp4):
+                _mp4 = final_path
+            _tag = str(args.name or args.episode)
+            if (_srt and os.path.exists(_vs) and os.path.exists(_mp4)
+                    and os.path.exists(_sa.TALK_VENV_PY)
+                    and os.path.exists(_sa.ASR_MODEL_DIR)):
+                print(f"  字幕同步自动校验（独立ASR复核，约1分钟）...")
+                _r = subprocess.run(
+                    [sys.executable, _vs, _mp4, _srt, "--tag", _tag, "--top", "3"],
+                    capture_output=True, text=True, timeout=1800)
+                for _l in (_r.stdout or "").strip().splitlines():
+                    print("  " + _l)
+                if _r.returncode != 0:
+                    print("  ⚠ 有条目超阈，请人工听核该处")
+        except Exception as _e:
+            print(f"  ⚠ 同步校验跳过（{type(_e).__name__}: {str(_e)[:60]}）")
+
         print(f"\n  ⚠ 请人工确认：")
-        print(f"     1. 拖到片尾，字幕和声音对得上")
+        print(f"     1. 画面切换与旁白内容是否对得上（AI 看不到画面）")
         print(f"     2. 传手机用抖音预览，字幕没被 UI 挡住")
 
     # 清理
