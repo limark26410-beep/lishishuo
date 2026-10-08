@@ -381,13 +381,16 @@ def burn_subtitles_overlay(
 
     sv = os.path.join(tmp_dir, "subs.mp4")
     print(f"  字幕轨逐帧铺图 {n_frames} 帧 @{FPS}fps（{total:.2f}s）...")
+    # 字幕轨只有 1080x300，用软件编码 libx264：便宜，且不依赖硬件编码器。
+    # （GL-20260911 实测 h264_videotoolbox 跑几小时后会 "Could not open encoder
+    #   before EOF" 直接失败，退出码 187，整期出片中断。）
     subprocess.run([
-        "ffmpeg", "-y", "-framerate", str(FPS),
+        "ffmpeg", "-y", "-loglevel", "error", "-framerate", str(FPS),
         "-i", os.path.join(fdir, "%06d.png"),
-        "-c:v", "h264_videotoolbox", "-b:v", "2000k",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
         "-pix_fmt", "yuv420p", "-r", str(FPS), "-frames:v", str(n_frames),
         sv,
-    ], check=True, capture_output=True, text=True, timeout=900)
+    ], check=True, capture_output=True, text=True, timeout=1800)
     print(f"  Subtitle video: {os.path.getsize(sv)/1024/1024:.1f}MB")
 
     # Overlay Y: subtitle bar sits at bottom with MARGIN_BOTTOM clearance
@@ -398,15 +401,24 @@ def burn_subtitles_overlay(
     ]
 
     print(f"  Overlaying @ y={ov_y} (margin_bottom={MARGIN_BOTTOM})...")
-    subprocess.run([
+    base = [
         "ffmpeg", "-y",
         "-i", video_path, "-i", sv,
         "-filter_complex",
         f"[1:v]colorkey=0x000000:similarity=0.1:blend=0.0[sub];"
         f"[0:v][sub]overlay=0:{ov_y}[v]",
         "-map", "[v]", "-map", "0:a",
-        *enc, output_path,
-    ], check=True, capture_output=True, text=True, timeout=900)
+    ]
+    # 硬件编码器偶发不可用 → 自动回退软件编码，别让整期出片挂在最后一步
+    r = subprocess.run(base + enc + [output_path],
+                       capture_output=True, text=True, timeout=1800)
+    if r.returncode != 0:
+        print("  ⚠ 硬件编码失败，回退 libx264 重试...")
+        soft = ["-c:v", "libx264", "-preset", "medium", "-crf", "20", "-c:a", "copy"]
+        r2 = subprocess.run(base + soft + [output_path],
+                            capture_output=True, text=True, timeout=3600)
+        if r2.returncode != 0:
+            raise RuntimeError(f"字幕叠加编码失败: {(r2.stderr or '')[-300:]}")
 
     print(f"  Done: {Path(output_path).name}")
 

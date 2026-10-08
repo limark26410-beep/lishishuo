@@ -17,8 +17,8 @@ import time
 import requests
 
 API_ENDPOINT = "https://api.deepseek.com/chat/completions"
-MODEL = "deepseek-v4-pro"
-TIMEOUT = 60          # 秒
+MODEL = "deepseek-v4-flash"   # pro 高峰期 120s+ 卡死，flash 4s 正常（2026-09-02 实测）
+TIMEOUT = 300         # 秒（DeepSeek 高峰期响应慢，60s 不够写长稿，放宽到 5 分钟）
 MAX_RETRIES = 2       # 最多重试 2 次（首次 + 2 次重试）
 
 
