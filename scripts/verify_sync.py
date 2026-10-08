@@ -60,9 +60,10 @@ def _load_burn():
     return SB
 
 
-def verify_pixels(media, srt_path, tmpdir, fps=5.0):
+def verify_pixels(media, srt_path, tmpdir, fps=25.0):
     """逐帧比对"屏幕上的字幕"与"SRT 该显示的字幕"，并量化漂移。
 
+    25fps 逐帧 + 缩图：漂移数字直接就是真实帧级偏差（正确烧录应 ≈0.00s）。
     返回 (stats, switches)；switches = [(条目序号, SRT切换点, 屏幕实际切换点, 偏差)]
     """
     import numpy as np
@@ -73,7 +74,7 @@ def verify_pixels(media, srt_path, tmpdir, fps=5.0):
     if not entries:
         raise RuntimeError("字幕为空")
 
-    # 每条字幕渲染成参考掩码（下采样 4 倍加速比对）
+    # 每条字幕渲染成参考掩码（缩到 1/4 尺寸，比对快且抗压缩噪点）
     masks = []
     keep = []
     for i, e in enumerate(entries):
@@ -86,27 +87,43 @@ def verify_pixels(media, srt_path, tmpdir, fps=5.0):
         masks.append(g[::4, ::4])
         keep.append(i)
     masks = np.array(masks)
-    bar_h = masks.shape[1] * 4
+    mh, mw = masks.shape[1], masks.shape[2]
     ov_y = SB.IMG_H - SB.BAR_HEIGHT - SB.MARGIN_BOTTOM
 
-    raw = os.path.join(tmpdir, "bands.raw")
-    subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-i", media, "-vf",
-                    f"crop={SB.IMG_W}:{bar_h}:0:{ov_y},format=gray",
-                    "-r", str(fps), "-f", "rawvideo", "-pix_fmt", "gray", raw],
-                   check=True, capture_output=True)
-    B = np.fromfile(raw, dtype=np.uint8)
-    nf = B.size // (SB.IMG_W * bar_h)
-    B = B.reshape(nf, bar_h // 4 * 4, SB.IMG_W)[:, :bar_h, :][:, ::4, ::4]
-
-    # 每帧找最像的条目
+    # 原始分辨率取帧 → 二值化 → 再降采样（先缩图会把笔画糊成灰、二值化后丢失）
+    fs = SB.IMG_W * SB.BAR_HEIGHT
+    proc = subprocess.Popen(
+        [FFMPEG, "-v", "error", "-i", media, "-vf",
+         f"crop={SB.IMG_W}:{SB.BAR_HEIGHT}:0:{ov_y},format=gray",
+         "-r", str(fps), "-f", "rawvideo", "-pix_fmt", "gray", "-"],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    M2 = masks.reshape(len(masks), -1).astype(np.float32)
+    msum = M2.sum(axis=1)
     on = []
-    for i in range(nf):
-        fr = B[i] >= 200
-        inter = (masks & fr).sum(axis=(1, 2))
-        union = (masks | fr).sum(axis=(1, 2))
+    CH = 250                       # 每批帧数，控制内存
+    n = 0
+    while True:
+        buf = proc.stdout.read(CH * fs)
+        if not buf:
+            break
+        cnt = len(buf) // fs
+        if cnt == 0:
+            break
+        B = np.frombuffer(buf[:cnt * fs], dtype=np.uint8).reshape(
+            cnt, SB.BAR_HEIGHT, SB.IMG_W)
+        Bb = (B >= 200)[:, ::4, ::4].reshape(cnt, -1)
+        inter = Bb.astype(np.float32) @ M2.T          # (cnt, K)
+        bsum = Bb.sum(axis=1, keepdims=True)
+        union = bsum + msum[None, :] - inter
         iou = np.where(union > 0, inter / np.maximum(union, 1), 0)
-        k = int(iou.argmax())
-        on.append((i / fps, keep[k], float(iou[k])))
+        best = iou.argmax(axis=1)
+        bestv = iou[np.arange(cnt), best]
+        for i in range(cnt):
+            on.append(((n + i) / fps, keep[int(best[i])], float(bestv[i])))
+        n += cnt
+    proc.stdout.close()
+    proc.wait()
+    nf = n
 
     def expected(t):
         for j, e in enumerate(entries):
