@@ -156,7 +156,9 @@ def verify_pixels(media, srt_path, tmpdir, fps=25.0):
     for j in range(1, len(entries)):
         T = entries[j]["start"]
         # 切到第 j 条 = 连续 3 帧（0.12s）argmax 都是 j
-        seg = [(t, k) for t, k, _s, _m in on if T - 4.5 <= t <= T + 1.5]
+        # 同样要求领先优势够大，否则相邻两条文本相近时会误判成"提前切换"
+        seg = [(t, k) for t, k, _s, m in on
+               if T - 4.5 <= t <= T + 1.5 and m > 0.10]
         sw = None
         for i in range(len(seg) - 2):
             if seg[i][1] == j and seg[i + 1][1] == j and seg[i + 2][1] == j:
