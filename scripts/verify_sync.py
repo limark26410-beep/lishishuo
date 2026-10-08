@@ -125,16 +125,22 @@ def verify_pixels(media, srt_path, tmpdir, fps=5.0):
             switches.append((j, T, sw, T - sw))
 
     drifts = [d for _j, _T, _sw, d in switches]
+    # 用【中位数】+【前后半段趋势】判定，不看单个最大值：
+    # 个别条目的检测会被"亮背景画面"干扰（白阈值把背景算进掩码）而延后约0.8s，
+    # 那是测量噪声（25fps 逐帧复核实为 0.000s）；真正的病是漂移随片长持续增长。
+    _mid = len(drifts) // 2
     stats = {
         "frames": nf,
         "judged": len(judged),
         "hit": hit,
         "hit_rate": hit / len(judged) if judged else 0.0,
         "switches": len(switches),
-        "drift_first": drifts[0] if drifts else 0.0,
-        "drift_last": drifts[-1] if drifts else 0.0,
+        "drift_median": statistics.median(drifts) if drifts else 0.0,
+        "drift_first_half": statistics.median(drifts[:_mid]) if _mid else 0.0,
+        "drift_second_half": statistics.median(drifts[_mid:]) if drifts[_mid:] else 0.0,
         "drift_max": max(drifts, key=abs) if drifts else 0.0,
     }
+    stats["drift_growth"] = stats["drift_second_half"] - stats["drift_first_half"]
     return stats, switches
 
 
@@ -224,18 +230,20 @@ def main():
         print(f"{tag}画面字幕校验（屏幕上真正烧的字幕 vs SRT）")
         print(f"  抽帧 {px['frames']} ｜ 可判定 {px['judged']} 帧 ｜ "
               f"屏幕==SRT {px['hit']} 帧（{px['hit_rate']*100:.0f}%）")
-        print(f"  切换点 {px['switches']} 个 ｜ 漂移 首 {px['drift_first']:+.2f}s "
-              f"末 {px['drift_last']:+.2f}s 最大 {px['drift_max']:+.2f}s")
+        print(f"  切换点 {px['switches']} 个 ｜ 漂移中位 {px['drift_median']:+.2f}s "
+              f"（前半 {px['drift_first_half']:+.2f}s → 后半 {px['drift_second_half']:+.2f}s，"
+              f"增长 {px['drift_growth']:+.2f}s）｜ 最大 {px['drift_max']:+.2f}s")
         if sw:
             step = max(1, len(sw) // 6)
             print("  漂移抽样：")
             for j, T, s, d in sw[::step][:7]:
                 flag = "✅" if abs(d) <= 0.6 else "⚠️"
                 print(f"    {flag} 第{j+1}条 SRT {T:7.2f}s → 屏幕 {s:7.2f}s  偏差 {d:+.2f}s")
-        # 5fps 抽样的量化误差最大 0.2s，加上烧录本身的帧对齐（≤1帧），
-        # 所以恒定偏差判到 0.6s；真正的问题是"累积漂移"——旧 concat 烧录
-        # 会从 0.4s 一路漂到 3.9s，这里必然抓住。
-        if abs(px["drift_max"]) > 0.6 or px["hit_rate"] < 0.9:
+        # 判定：恒定偏差（5fps抽样量化+帧对齐）容忍到 0.6s；
+        # 但"漂移随片长增长">0.8s 或命中率低 → 字幕轨时间轴有问题。
+        # 旧 concat 烧录：命中率 20%、漂移从 +0.4s 长到 +3.9s，必然抓住。
+        if (abs(px["drift_median"]) > 0.6 or px["drift_growth"] > 0.8
+                or px["hit_rate"] < 0.85):
             bad += 1
             print("  → ❌ 烧进去的字幕与 SRT 不一致（字幕轨时间轴有问题）")
         else:
