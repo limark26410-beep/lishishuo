@@ -4,7 +4,7 @@ h264+colorkey subtitle burn, real-pixel positioning (1080x1920)
 参数全部来自 config.yaml，不再硬编码。
 """
 
-import os, sys, subprocess, tempfile, shutil, re
+import os, sys, subprocess, tempfile, shutil, re, math
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
@@ -301,6 +301,15 @@ def _render_png(text: str, idx: int = 0) -> str:
 # Subtitle burn entry point
 # ============================================================
 
+def _video_duration(path: str) -> float:
+    """视频时长（秒）。ffprobe 在部分环境不可用，这里解析 ffmpeg -i 的 stderr。"""
+    r = subprocess.run(["ffmpeg", "-i", path], capture_output=True, text=True)
+    m = re.search(r"Duration: (\d+):(\d+):(\d+\.?\d*)", r.stderr)
+    if not m:
+        raise RuntimeError(f"读不到视频时长: {path}")
+    return int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
+
+
 def burn_subtitles_overlay(
     video_path: str,
     srt_path: str,
@@ -328,7 +337,6 @@ def burn_subtitles_overlay(
 
     tmp_dir = tempfile.mkdtemp(prefix="subburn_")
     text_cache = {}
-    concat_lines = []
     render_count = 0
 
     for start, end, text in entries:
@@ -338,24 +346,48 @@ def burn_subtitles_overlay(
         if text not in text_cache:
             text_cache[text] = _render_png(text, idx=render_count)
             render_count += 1
-        concat_lines.append(f"file '{text_cache[text]}'")
-        concat_lines.append(f"duration {dur:.3f}")
 
     print(f"  Rendered {render_count} unique PNGs (BAR_HEIGHT={BAR_HEIGHT}px)")
 
-    cp = os.path.join(tmp_dir, "c.txt")
-    with open(cp, "w") as f:
-        f.write("\n".join(concat_lines))
+    # ── 逐帧生成字幕轨（GL-20260911 修复）──
+    # 旧实现用 concat 分离器喂 PNG + duration，分离器对单张图片的 duration
+    # 按输出帧率取整，60 条累积成整轨漂移：实测屏幕字幕比 SRT 早 0.44s(17s处)
+    # → 2.6s(90s) → 3.8s(2分40秒) → 3.9s(结尾)，用户看到的正是这个"字幕对不上"。
+    # 改为按帧索引直接铺图：第 n 帧放"n/25 秒时刻应显示的那张"，时间由构造保证。
+    FPS = 25
+    total = _video_duration(video_path)
+    n_frames = max(1, int(round(total * FPS)))
+    blank = os.path.join(tmp_dir, "blank.png")
+    Image.new("RGBA", (IMG_W, BAR_HEIGHT), (0, 0, 0, 255)).save(blank, "PNG")
+
+    fdir = os.path.join(tmp_dir, "frames")
+    os.makedirs(fdir, exist_ok=True)
+    pngs = list(text_cache.values())
+    picks = [blank] * n_frames
+    for start, end, text in entries:
+        if end <= start or text not in text_cache:
+            continue
+        f0 = max(0, int(math.ceil(start * FPS - 1e-6)))
+        f1 = min(n_frames - 1, int(math.floor(end * FPS + 1e-6)))
+        src = text_cache[text]
+        for n in range(f0, f1 + 1):
+            picks[n] = src
+    for n, src in enumerate(picks):
+        dst = os.path.join(fdir, f"{n:06d}.png")
+        try:
+            os.link(src, dst)
+        except OSError:
+            shutil.copyfile(src, dst)
 
     sv = os.path.join(tmp_dir, "subs.mp4")
-    print(f"  Encoding subtitle video (h264_videotoolbox)...")
+    print(f"  字幕轨逐帧铺图 {n_frames} 帧 @{FPS}fps（{total:.2f}s）...")
     subprocess.run([
-        "ffmpeg", "-y", "-f", "concat", "-safe", "0",
-        "-i", cp,
+        "ffmpeg", "-y", "-framerate", str(FPS),
+        "-i", os.path.join(fdir, "%06d.png"),
         "-c:v", "h264_videotoolbox", "-b:v", "2000k",
-        "-pix_fmt", "yuv420p", "-r", "25",
+        "-pix_fmt", "yuv420p", "-r", str(FPS), "-frames:v", str(n_frames),
         sv,
-    ], check=True, capture_output=True, text=True, timeout=600)
+    ], check=True, capture_output=True, text=True, timeout=900)
     print(f"  Subtitle video: {os.path.getsize(sv)/1024/1024:.1f}MB")
 
     # Overlay Y: subtitle bar sits at bottom with MARGIN_BOTTOM clearance
