@@ -34,14 +34,19 @@ def _t(s):
 
 
 def read_srt(path):
+    """读字幕。text = 单行（给 ASR 当参考行，不能带换行）；
+    raw = 保留原始换行（给掩码渲染用——烧录是按原样换行渲染的，
+    用单行去渲染会得到不同字形，造成假性不匹配）。"""
     out = []
     for blk in open(path, encoding="utf-8").read().strip().split("\n\n"):
         L = blk.split("\n")
         if len(L) >= 3 and "-->" in L[1]:
             a, b = L[1].split("-->")
-            txt = "".join(L[2:]).strip()
+            lines = [x for x in L[2:]]
+            txt = "".join(lines).strip()
             if txt:
-                out.append({"start": _t(a), "end": _t(b), "text": txt})
+                out.append({"start": _t(a), "end": _t(b),
+                            "text": txt, "raw": "\n".join(lines)})
     return out
 
 
@@ -79,7 +84,7 @@ def verify_pixels(media, srt_path, tmpdir, fps=25.0):
     keep = []
     for i, e in enumerate(entries):
         try:
-            p = SB._render_png(e["text"], 0)
+            p = SB._render_png(e.get("raw") or e["text"], 0)
         except Exception:
             continue
         g = np.array(Image.open(p).convert("L")) >= 200
@@ -90,17 +95,23 @@ def verify_pixels(media, srt_path, tmpdir, fps=25.0):
     mh, mw = masks.shape[1], masks.shape[2]
     ov_y = SB.IMG_H - SB.BAR_HEIGHT - SB.MARGIN_BOTTOM
 
-    # 原始分辨率取帧 → 二值化 → 再降采样（先缩图会把笔画糊成灰、二值化后丢失）
+    # 原始分辨率取帧 → 归一化相关匹配
+    # 不用"白像素阈值+IoU"：背景画面很亮时（雪/天空/白墙）背景像素也被算进掩码，
+    # 会污染比对、把切换点检迟到 0.4~1.2 秒（实测邯郸第4条、南京第18条误报）。
+    # 归一化相关对背景亮度/对比度整体偏移不变，只在"文字笔画形状"上给分。
     fs = SB.IMG_W * SB.BAR_HEIGHT
     proc = subprocess.Popen(
         [FFMPEG, "-v", "error", "-i", media, "-vf",
          f"crop={SB.IMG_W}:{SB.BAR_HEIGHT}:0:{ov_y},format=gray",
          "-r", str(fps), "-f", "rawvideo", "-pix_fmt", "gray", "-"],
         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    N = masks.shape[1] * masks.shape[2]
     M2 = masks.reshape(len(masks), -1).astype(np.float32)
     msum = M2.sum(axis=1)
+    msum2 = (M2 * M2).sum(axis=1)
+    mvar = np.maximum(msum2 - msum ** 2 / N, 1e-6)
     on = []
-    CH = 250                       # 每批帧数，控制内存
+    CH = 250
     n = 0
     while True:
         buf = proc.stdout.read(CH * fs)
@@ -111,15 +122,22 @@ def verify_pixels(media, srt_path, tmpdir, fps=25.0):
             break
         B = np.frombuffer(buf[:cnt * fs], dtype=np.uint8).reshape(
             cnt, SB.BAR_HEIGHT, SB.IMG_W)
-        Bb = (B >= 200)[:, ::4, ::4].reshape(cnt, -1)
-        inter = Bb.astype(np.float32) @ M2.T          # (cnt, K)
-        bsum = Bb.sum(axis=1, keepdims=True)
-        union = bsum + msum[None, :] - inter
-        iou = np.where(union > 0, inter / np.maximum(union, 1), 0)
-        best = iou.argmax(axis=1)
-        bestv = iou[np.arange(cnt), best]
+        F = B[:, ::4, ::4].reshape(cnt, -1).astype(np.float32)
+        fsum = F.sum(axis=1)
+        fvar = np.maximum((F * F).sum(axis=1) - fsum ** 2 / N, 1e-6)
+        dot = F @ M2.T
+        cov = dot - np.outer(fsum, msum) / N
+        corr = cov / np.sqrt(np.outer(fvar, mvar))
+        order = np.argsort(-corr, axis=1)
+        best = order[:, 0]
+        bestv = corr[np.arange(cnt), best]
+        second = corr[np.arange(cnt), order[:, 1]]
+        # 判定只看【排序与领先优势】，不看绝对分数：
+        # 短句 + 亮背景时相关值可能只有 0.29，但仍是最高分且领先次席 0.24，
+        # 用绝对阈值会把这帧判成"没匹配上"，导致切换点被检迟 1 秒多（实测南京第18条）。
         for i in range(cnt):
-            on.append(((n + i) / fps, keep[int(best[i])], float(bestv[i])))
+            on.append(((n + i) / fps, keep[int(best[i])], float(bestv[i]),
+                       float(bestv[i] - second[i])))
         n += cnt
     proc.stdout.close()
     proc.wait()
@@ -131,13 +149,19 @@ def verify_pixels(media, srt_path, tmpdir, fps=25.0):
                 return j
         return None
 
-    judged = [(t, k, s) for t, k, s in on if s > 0.35 and expected(t) is not None]
-    hit = sum(1 for t, k, s in judged if k == expected(t))
+    judged = [(t, k, s, m) for t, k, s, m in on
+              if m > 0.10 and expected(t) is not None]
+    hit = sum(1 for t, k, s, m in judged if k == expected(t))
     switches = []
     for j in range(1, len(entries)):
         T = entries[j]["start"]
-        seg = [(t, k, s) for t, k, s in on if T - 4.0 <= t <= T + 1.2 and s > 0.5]
-        sw = next((t for t, k, s in seg if k == j), None)
+        # 切到第 j 条 = 连续 3 帧（0.12s）argmax 都是 j
+        seg = [(t, k) for t, k, _s, _m in on if T - 4.5 <= t <= T + 1.5]
+        sw = None
+        for i in range(len(seg) - 2):
+            if seg[i][1] == j and seg[i + 1][1] == j and seg[i + 2][1] == j:
+                sw = seg[i][0]
+                break
         if sw is not None:
             switches.append((j, T, sw, T - sw))
 
