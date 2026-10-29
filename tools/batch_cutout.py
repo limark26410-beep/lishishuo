@@ -34,8 +34,24 @@ def _session_cache():
     return _session_cache.cache
 
 
-def cutout_image(src, dst, model="u2net", max_side=1600):
-    """单张抠图：src 图片 → dst 透明底 PNG"""
+def trim_alpha(im, pad=8, thresh=20):
+    """裁掉透明边缘，让主体占满画布（pad: 四周留白 px）"""
+    from PIL import Image
+    import numpy as np
+    a = np.array(im)
+    alpha = a[:, :, 3] > thresh
+    ys, xs = np.where(alpha)
+    if not len(ys):
+        return im
+    x0 = max(0, xs.min() - pad); x1 = min(im.width, xs.max() + pad + 1)
+    y0 = max(0, ys.min() - pad); y1 = min(im.height, ys.max() + pad + 1)
+    return im.crop((x0, y0, x1, y1))
+
+
+def cutout_image(src, dst, model="u2net", max_side=6000, do_trim=True):
+    """单张抠图：src 图片 → dst 透明底 PNG
+    max_side: 处理分辨率上限（越大越清晰，默认3000）
+    do_trim: 是否裁掉透明边缘（默认裁，主体占满画布）"""
     from PIL import Image
     if not _REMBG_OK:
         raise RuntimeError("rembg 未安装，请用 venv311 环境运行")
@@ -51,12 +67,15 @@ def cutout_image(src, dst, model="u2net", max_side=1600):
     if max_side and max(img.size) > max_side:
         img.thumbnail((max_side, max_side), Image.LANCZOS)
     out = remove(img, session=session)
+    if do_trim:
+        out = trim_alpha(out)
     os.makedirs(os.path.dirname(os.path.abspath(dst)), exist_ok=True)
     out.save(dst)
     return dst
 
 
-def batch_cutout(src_dir, out_dir=None, model="u2net", max_side=1600,
+def batch_cutout(src_dir, out_dir=None, model="u2net", max_side=6000,
+                 do_trim=True,
                  exts=(".jpg", ".jpeg", ".png")):
     """目录批量抠图：输出 out_dir（缺省 = src_dir/cut）
     返回 [(源名, 输出路径 or None), ...]"""
@@ -74,7 +93,7 @@ def batch_cutout(src_dir, out_dir=None, model="u2net", max_side=1600,
         dst = os.path.join(out_dir, f"{base}_cut.png")
         print(f"  抠 {f} …", flush=True)
         try:
-            cutout_image(src, dst, model=model, max_side=max_side)
+            cutout_image(src, dst, model=model, max_side=max_side, do_trim=do_trim)
             print(f"  ✓ → {dst}", flush=True)
             results.append((f, dst))
         except Exception as e:

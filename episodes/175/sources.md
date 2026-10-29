@@ -1,0 +1,24 @@
+# 第175期 图片来源
+
+> Pexels：免费商用、无需署名。Wikimedia Commons：CC 授权，发布时请在简介注明来源。
+
+- `img_001_pexels_chinese_lotus_pond.jpg` ← [Pexels] [chinese lotus pond](https://www.pexels.com/photo/pavilion-on-west-lake-hangzhou-zhejiang-china-8588836/) by Marstion ｜ Pexels License ｜ Traditional pavilion surrounded by lush lotus flowers at Wes
+- `img_002_pexels_chinese_lotus_pond.jpg` ← [Pexels] [chinese lotus pond](https://www.pexels.com/photo/traditional-asian-temple-with-tranquil-pond-37674217/) by Ruben VP ｜ Pexels License ｜ Tranquil scene of an Asian temple by a pond with lily pads a
+- `img_003_pexels_chinese_lotus_pond.jpg` ← [Pexels] [chinese lotus pond](https://www.pexels.com/photo/traditional-asian-pagoda-near-pond-6376276/) by Marstion ｜ Pexels License ｜ Exterior of oriental temple located near green trees and cal
+- `img_004_pexels_chinese_lotus_pond.jpg` ← [Pexels] [chinese lotus pond](https://www.pexels.com/photo/traditional-chinese-pavilion-over-serene-lotus-pond-31915620/) by NGUYỄN THÀNH NHƠN ｜ Pexels License ｜ A serene view of a Chinese pavilion over a lotus pond surrou
+- `img_005_pexels_chinese_classical_garden.jpg` ← [Pexels] [chinese classical garden](https://www.pexels.com/photo/serene-chinese-garden-with-red-lantern-31956319/) by Lily  Lili ｜ Pexels License ｜ Tranquil view of a traditional Chinese garden featuring a vi
+- `img_006_pexels_chinese_classical_garden.jpg` ← [Pexels] [chinese classical garden](https://www.pexels.com/photo/peaceful-traditional-chinese-garden-pavilion-39041244/) by Guillaume Kremer ｜ Pexels License ｜ Serene traditional Chinese garden with a picturesque pavilio
+- `img_007_pexels_chinese_classical_garden.jpg` ← [Pexels] [chinese classical garden](https://www.pexels.com/photo/traditional-chinese-architecture-with-garden-bridge-28770566/) by Andy Lee ｜ Pexels License ｜ Scenic view of traditional Chinese architecture featuring a 
+- `img_008_pexels_chinese_spring_blossom.jpg` ← [Pexels] [chinese spring blossom](https://www.pexels.com/photo/cherry-blossoms-in-spring-wuxi-china-37521618/) by Frank Lee ｜ Pexels License ｜ Serene cherry blossom garden scene by a pond in Wuxi, Jiangs
+- `img_009_pexels_chinese_spring_blossom.jpg` ← [Pexels] [chinese spring blossom](https://www.pexels.com/photo/serene-sakura-blossoms-in-traditional-garden-37733421/) by Raven Zhou ｜ Pexels License ｜ Close-up of sakura blossoms beside traditional Asian archite
+- `img_010_pexels_chinese_spring_blossom.jpg` ← [Pexels] [chinese spring blossom](https://www.pexels.com/photo/vibrant-cherry-blossoms-in-full-bloom-36709590/) by Andy Lee ｜ Pexels License ｜ Stunning view of vibrant pink cherry blossoms in full bloom 
+- `img_011_pexels_chinese_ink_wash_style.jpg` ← [Pexels] [chinese ink wash style](https://www.pexels.com/photo/ceramic-container-with-seal-paste-6213050/) by Feng Zou ｜ Pexels License ｜ Traditional Chinese seal set with red ink paste against a dr
+- `img_012_pexels_chinese_ink_wash_style.jpg` ← [Pexels] [chinese ink wash style](https://www.pexels.com/photo/a-person-holding-black-paintbrush-9016466/) by Kevin  Malik ｜ Pexels License ｜ Close-up of hand using traditional ink brush for calligraphy
+- `img_013_pexels_chinese_ink_wash_style.jpg` ← [Pexels] [chinese ink wash style](https://www.pexels.com/photo/a-person-writing-on-red-paper-9016474/) by Kevin  Malik ｜ Pexels License ｜ Artistic expression of Chinese calligraphy on red paper, com
+- `img_014_pexels_chinese_ink_wash_style.jpg` ← [Pexels] [chinese ink wash style](https://www.pexels.com/photo/close-up-of-a-brush-on-white-surface-9478275/) by cottonbro studio ｜ Pexels License ｜ Close-up of a traditional ink brush and calligraphy tools on
+- `img_015_commons_cnc4cd3f.jpg` ← [Commons] [趵突泉](https://commons.wikimedia.org/wiki/File:Baotu_spring_park_pavilion-20150519-RM-180002.jpg) by Ermell ｜ CC BY-SA 4.0 ｜ Baotu spring park pavilion-20150519-RM-180002.jpg
+- `img_016_commons_cnc4cd3f.jpg` ← [Commons] [趵突泉](https://commons.wikimedia.org/wiki/File:China_Jinan_Baotu_Spring_5196935.jpg) by Ermell ｜ CC BY-SA 4.0 ｜ China Jinan Baotu Spring 5196935.jpg
+- `img_017_commons_cnc4cd3f.jpg` ← [Commons] [趵突泉](https://commons.wikimedia.org/wiki/File:Jinan_Baotu_Spring-20150519-RM-165055.jpg) by Ermell ｜ CC BY-SA 4.0 ｜ Jinan Baotu Spring-20150519-RM-165055.jpg
+- `img_018_commons_cne950f1.jpg` ← [Commons] [大明湖](https://commons.wikimedia.org/wiki/File:Deyue_Pavilion_in_Daminghu_Park,_Jinan,_Shandong,_China.jpg) by SunRuikang ｜ CC BY-SA 4.0 ｜ Deyue Pavilion in Daminghu Park, Jinan, Shandong, China.jpg
+- `img_019_commons_cne950f1.jpg` ← [Commons] [大明湖](https://commons.wikimedia.org/wiki/File:%E5%A4%A7%E6%98%8E%E6%B9%962019.jpg) by Suginami ｜ CC BY-SA 4.0 ｜ 大明湖2019.jpg
+- `img_020_commons_cne950f1.jpg` ← [Commons] [大明湖](https://commons.wikimedia.org/wiki/File:%E5%A4%A7%E6%98%8E%E6%B9%96%E5%8D%97%E9%96%80.jpg) by Vitsuha ｜ CC0 ｜ 大明湖南門.jpg

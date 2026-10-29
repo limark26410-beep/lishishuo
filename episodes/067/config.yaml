@@ -1,0 +1,94 @@
+bgm:
+  enabled: true
+  path: assets/bgm.mp3
+  volume: 0.12
+checks:
+  max_line_length: true
+  max_lines: true
+  text_integrity: true
+cleanup:
+  clean_clips: true
+  clean_images: false
+image:
+  cost_guard:
+    log_file: logs/image_costs.csv
+    max_images_per_episode: 50
+  local_dir: ''
+  provider: tongyi
+  source: local
+  style_anchor: 中国古风，水墨质感，纪录片氛围，无文字，场景宏大，写意风格
+  tongyi:
+    api_base: https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis
+    batch_size: 3
+    max_retries: 3
+    model: wanx2.1-t2i-turbo
+    poll_interval: 5
+    size: 1080*1440
+    timeout: 600
+output:
+  archive_images: false
+  backup_before_overwrite: true
+  dirs:
+    audio: 录音
+    images: 图片
+    script: 稿子
+    shorts: 短视频
+    subtitle: 字幕
+    video: 成片/十大帝王
+  library_root: /Users/local/Desktop/历史说素材/
+pipeline:
+  name: lishishuo-ai v2.0
+  version: 2.0-alpha
+review:
+  enabled: true
+subtitle:
+  bar_height: 300
+  font_path: /Library/Fonts/AdobeHeitiStd-Regular.otf
+  font_path_linux: /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc
+  font_size: 60
+  margin_bottom: 400
+  max_chars_per_line: 14
+  max_lines: 2
+  outline_width: 3
+title_card:
+  duration: 3
+  gold_line_gap: 18
+  gold_line_height: 3
+  gold_line_width: 400
+  line_gap: 25
+  main_font_size: 69
+  series_font_size: 36
+  series_gap: 50
+  series_name: 十大名将
+tts:
+  engine: edge-tts
+  rate: -4%
+  subtitle_format: vtt
+  voice: zh-CN-YunjianNeural
+video:
+  aspect: '9:16'
+  audio_bitrate: 192k
+  audio_codec: aac
+  encoder_options:
+    h264_videotoolbox:
+      bitrate: 3000k
+    libx264:
+      crf: 26
+      preset: medium
+  encoder_platform:
+    darwin: h264_videotoolbox
+    linux: libx264
+  fps: 25
+  height: 1920
+  ken_burns:
+    pan_speed: 0.0004
+    preview_scale: 2
+    zoom_end: 1.08
+    zoom_start: 1.0
+  pixel_format: yuv420p
+  transition: concat
+  width: 1080
+  xfade:
+    duration: 1.0
+    transition: fade
+  encoder: libx264

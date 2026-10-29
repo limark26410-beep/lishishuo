@@ -2,6 +2,9 @@
 happyhorse i2v 图生视频（GL-20260903）
 用首帧图片 + prompt 生成动态视频。免费额度（req_limit 5/并发）。
 用法: python lib/gen_i2v_happyhorse.py <ep> <seg_no> <image_path> [output_name]
+
+GL-20261013：统一走 Session(trust_env=False) 直连 —— 本机残留代理
+（127.0.0.1:1082）会把请求转到不可达链路，与 gen_ai_video_zhipu.py 同一处理。
 """
 import sys, os, json, time, base64
 import requests
@@ -13,6 +16,35 @@ KEY = os.environ.get("DASHSCOPE_API_KEY", "") or open(
 MODEL = "happyhorse-1.1-i2v"
 SUBMIT_URL = "https://dashscope.aliyuncs.com/api/v1/services/aigc/video-generation/video-synthesis"
 TASK_URL = "https://dashscope.aliyuncs.com/api/v1/tasks/{}"
+
+# 忽略系统代理直连（与 gen_ai_video_zhipu.py 一致）
+_sess = requests.Session()
+_sess.trust_env = False
+
+
+def _post(url, **kw):
+    """POST 带重试：网络抖动时自动重连。"""
+    last = None
+    for i in range(4):
+        try:
+            return _sess.post(url, **kw)
+        except requests.exceptions.RequestException as e:
+            last = e
+            if i < 3:
+                time.sleep(5 * (i + 1))
+    raise last
+
+
+def _get(url, **kw):
+    last = None
+    for i in range(4):
+        try:
+            return _sess.get(url, **kw)
+        except requests.exceptions.RequestException as e:
+            last = e
+            if i < 3:
+                time.sleep(5 * (i + 1))
+    raise last
 
 
 def submit(prompt: str, image_path: str, duration: int = 15,
@@ -31,20 +63,21 @@ def submit(prompt: str, image_path: str, duration: int = 15,
         "parameters": {"size": size, "duration": duration,
                        "watermark": False},
     }
-    r = requests.post(SUBMIT_URL,
-                      headers={"Authorization": f"Bearer {KEY}",
-                               "Content-Type": "application/json",
-                               "X-DashScope-Async": "enable"},
-                      json=body, timeout=60)
-    r.raise_for_status()
+    r = _post(SUBMIT_URL,
+              headers={"Authorization": f"Bearer {KEY}",
+                       "Content-Type": "application/json",
+                       "X-DashScope-Async": "enable"},
+              json=body, timeout=60)
+    if r.status_code != 200:
+        raise RuntimeError(f"提交失败 HTTP {r.status_code}: {r.text[:300]}")
     return r.json()["output"]["task_id"]
 
 
 def poll(task_id: str, timeout=900) -> str:
     deadline = time.time() + timeout
     while time.time() < deadline:
-        r = requests.get(TASK_URL.format(task_id),
-                         headers={"Authorization": f"Bearer {KEY}"}, timeout=30)
+        r = _get(TASK_URL.format(task_id),
+                 headers={"Authorization": f"Bearer {KEY}"}, timeout=30)
         d = r.json()
         out = d.get("output", {})
         st = out.get("task_status", "")
@@ -59,7 +92,9 @@ def poll(task_id: str, timeout=900) -> str:
 
 def download(url: str, out_path: str):
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
-    data = requests.get(url, timeout=240).content
+    data = _get(url, timeout=240).content
+    if len(data) < 10000:
+        raise RuntimeError(f"下载内容过小（{len(data)}B），可能不是视频: {url[:120]}")
     with open(out_path, "wb") as f:
         f.write(data)
     print(f"  ✓ {os.path.basename(out_path)} ({len(data)//1024//1024:.1f}MB)")

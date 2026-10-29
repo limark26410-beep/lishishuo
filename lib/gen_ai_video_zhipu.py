@@ -22,26 +22,63 @@ _sess = requests.Session()
 _sess.trust_env = False
 
 
+class BusyError(RuntimeError):
+    """模型繁忙（429/1305）—— 不是硬失败，稍后重试即可。
+    批量出片用它做「轮流排队」：本轮没过就排到下一轮。"""
+
+
 def submit(prompt: str, model: str = DEFAULT_MODEL,
-           size: str = "1920x1080", duration: int = 10) -> str:
+           size: str = "1920x1080", duration: int = 10,
+           image_url: str = "", max_retries: int = 12,
+           quiet: bool = False) -> str:
+    """提交视频任务。
+
+    GL-20261013：新增 image_url —— 传首帧图（URL 或 base64 字符串）即图生视频。
+    实测 cogvideox-flash（免费档）同样支持 image_url，所以保一致性的
+    「首帧合成 → 图生视频」链路可以零成本跑。
+    实测该免费档 1305（访问量过大）极频繁，单镜头死磕不划算 ——
+    批量出片请传 max_retries=1、quiet=True，改用 run_drama 的「轮流排队」。
+    """
     body = {"model": model, "prompt": prompt,
             "size": size, "duration": duration, "fps": 30,
             "with_audio": False}
+    if image_url:
+        body["image_url"] = image_url
     last = None
-    for i in range(6):
+    for i in range(max(1, max_retries)):
         r = _sess.post(SUBMIT_URL,
                        headers={"Authorization": f"Bearer {KEY}",
                                 "Content-Type": "application/json"},
-                       json=body, timeout=60)
-        if r.status_code == 429:  # 免费档限速：退避重试
+                       json=body, timeout=120)
+        if r.status_code == 429:  # 免费档限速：退避重试（上限 60s，避免越等越久）
             last = r
-            wait = 20 * (i + 1)
-            print(f"  ⏸ 限速(429)，{wait}s 后重试…")
+            wait = min(60, 15 + 8 * i)
+            if not quiet:
+                print(f"  ⏸ 限速(429)，{wait}s 后重试（{i+1}/{max_retries}）…")
             time.sleep(wait)
             continue
+        if r.status_code == 200:
+            return r.json()["id"]
+        # 业务错误码：1305=访问量过大（可重试） 1113=余额不足（重试无用）
+        try:
+            err = r.json().get("error", {})
+        except Exception:
+            err = {}
+        code = str(err.get("code", ""))
+        msg = str(err.get("message", r.text[:150]))
+        if code == "1305":
+            last = r
+            wait = min(60, 15 + 8 * i)
+            if not quiet:
+                print(f"  ⏸ 模型繁忙(1305)，{wait}s 后重试（{i+1}/{max_retries}）…")
+            time.sleep(wait)
+            continue
+        if code == "1113":
+            raise RuntimeError(
+                f"智谱账户余额不足（1113）：{msg}\n"
+                "  → 换免费档：model='cogvideox-flash'（本项目默认）")
         r.raise_for_status()
-        return r.json()["id"]
-    raise requests.exceptions.HTTPError(f"429 限速重试仍失败: {last.text[:200]}")
+    raise BusyError(f"{model} 繁忙（1305/429），{max_retries} 次重试仍未排上；稍后再试")
 
 
 def _get_retry(url, headers=None, timeout=30, tries=4):
@@ -92,8 +129,17 @@ def gen_sequence(prompts: list, out_dir: str, model: str = DEFAULT_MODEL,
     # 全部先提交再逐个轮询
     tasks = []
     for i, p in enumerate(prompts, 1):
-        print(f"  提交 [{i}/{len(prompts)}] ({model}): {p['prompt'][:30]}...")
-        tid = submit(p["prompt"], model, duration=duration)
+        # GL-20261013：p 里带 image_path 就走图生视频（首帧 → 视频，保人物一致性）
+        img_b64 = ""
+        ipp = p.get("image_path")
+        if ipp and os.path.exists(ipp):
+            import base64
+            img_b64 = base64.b64encode(open(ipp, "rb").read()).decode()
+            print(f"  提交 [{i}/{len(prompts)}] ({model}/i2v): "
+                  f"{os.path.basename(ipp)} …")
+        else:
+            print(f"  提交 [{i}/{len(prompts)}] ({model}): {p['prompt'][:30]}...")
+        tid = submit(p["prompt"], model, duration=duration, image_url=img_b64)
         tasks.append((i, p, tid))
         time.sleep(10)  # 免费档并发低，拉长提交间隔避免 429
     print(f"\n共 {len(tasks)} 个任务，开始轮询...")

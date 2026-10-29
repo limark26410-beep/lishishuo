@@ -75,3 +75,14 @@ episodes/*/验收/
 # Environment variables (secrets)
 .env
 .env.local
+
+# 本地环境与素材（体积大，不进 git）
+venv311/
+素材库/
+products/
+backup_upgrade_*/
+
+# 成片/片段视频（体积大，不進 git）
+episodes/*/*.mp4
+episodes/*/ai_video/
+episodes/*/clips_*/

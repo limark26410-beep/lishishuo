@@ -1,0 +1,50 @@
+# 十大女将 第2期 武则天（GL-20260910）
+# 方式：流水线生图（智谱免费 CogView-3-Flash，已签去水印声明）
+image:
+  source: generate
+  provider: zhipu
+  style_anchor: 中国古风，水墨质感，纪录片氛围，无文字，场景宏大，写意风格
+  zhipu:
+    model: cogview-3-flash
+    size: 1088x1920
+    batch_size: 1
+  cost_guard:
+    max_images_per_episode: 60
+    log_file: logs/image_costs.csv
+title_card:
+  duration: 3
+  series_name: 十大女将
+output:
+  library_root: /Users/local/Desktop/历史说素材/
+  dirs:
+    video: 成片/十大女将
+    audio: 录音
+    subtitle: 字幕
+    script: 稿子
+    images: 图片
+  backup_before_overwrite: true
+  archive_images: true
+video:
+  width: 1080
+  height: 1920
+  aspect: '9:16'
+  fps: 25
+  transition: concat
+  ken_burns:
+    zoom_start: 1.0
+    zoom_end: 1.08
+    pan_speed: 0.0004
+subtitle:
+  font_size: 60
+  margin_bottom: 400
+  max_chars_per_line: 14
+  max_lines: 2
+  bar_height: 300
+tts:
+  engine: doubao
+  rate: -20%
+  voice: zh_female_vv_uranus_bigtts
+bgm:
+  enabled: true
+  path: assets/bgm.mp3
+  volume: 0.12
