@@ -2,11 +2,11 @@
 路径统一管理（GL-20260923）：让流水线可在任意机器/任意目录运行。
 
 仓库根：自动定位（本文件在 <repo>/lib/ 下，上溯一级即仓库根），
-       clone 到任何路径都通用，不再写死 /Users/local/...。
+       clone 到任何路径都通用，不写死机器专属路径。
 素材库根：可配置。优先级：
       1. 环境变量 LISHISHUO_MATERIAL_ROOT
       2. config.yaml 的 paths.material_root
-      3. 默认 ~/Desktop/历史说素材
+      3. 默认 C:/历史说素材
 
 用法：
     from paths import REPO_ROOT, material_root
@@ -18,7 +18,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 _ENV_KEY = "LISHISHUO_MATERIAL_ROOT"
-_DEFAULT = Path("~/Desktop/历史说素材")
+_DEFAULT = Path("C:/历史说素材")
 
 
 def material_root() -> Path:

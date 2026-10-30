@@ -9,6 +9,9 @@ echo   │     历史说 · 出片工具            │
 echo   └─────────────────────────────────┘
 echo.
 
+rem 本机 ffmpeg 固定放在 C:\ffmpeg\bin（新开窗口 PATH 没刷新也能用）
+if exist C:\ffmpeg\bin\ffmpeg.exe set PATH=C:\ffmpeg\bin;%PATH%
+
 rem 检查 ffmpeg（视频处理必需，同事自装）
 where ffmpeg >nul 2>nul
 if errorlevel 1 (
@@ -28,7 +31,7 @@ rem 检查虚拟环境
 if not exist venv\Scripts\python.exe (
     echo   ⚠ 未找到虚拟环境，正在创建（首次运行需联网，约1分钟）…
     python -m venv venv
-    venv\Scripts\pip install -i https://pypi.tuna.tsinghua.edu.cn/simple pyyaml pillow edge-tts requests python-docx
+    venv\Scripts\pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt
     echo   ✓ 环境就绪
     echo.
 )

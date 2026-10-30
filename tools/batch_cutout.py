@@ -4,7 +4,7 @@
 GL-20260909：茂丰原浆礼盒图抠图，融合进营销工作台/长图工具等
 
 环境: 必须用 venv311（rembg 依赖装在那里）
-  /Users/local/lishishuo/venv311/bin/python
+  C:\lishishuo\venv311\Scripts\python.exe
 
 用法:
   1) CLI 批量: venv311/bin/python tools/batch_cutout.py [源目录] [输出目录]
@@ -108,7 +108,7 @@ if __name__ == "__main__":
     out = sys.argv[2] if len(sys.argv) > 2 else None
     model = sys.argv[3] if len(sys.argv) > 3 else "u2net"
     if not _REMBG_OK:
-        print("需要 venv311 环境：/Users/local/lishishuo/venv311/bin/python 运行本脚本")
+        print("需要 venv311 环境：C:\\lishishuo\\venv311\\Scripts\\python.exe 运行本脚本")
         sys.exit(1)
     print(f"批量抠图: {src} (model={model})")
     batch_cutout(src, out, model=model)

@@ -14,16 +14,21 @@ import argparse
 import json
 import os
 import re
+import shutil
 import statistics
 import subprocess
 import sys
 import tempfile
 
-TALK_VENV_PY = "/Users/local/.dsh/skills/video-talkcraft/.venv311/bin/python"
-TALK_TS_SCRIPT = "/Users/local/.dsh/skills/video-talkcraft/scripts/timestamps_cpu.py"
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+for _d in (r"C:\ffmpeg\bin", r"C:\MV_WT\tools\ffmpeg"):
+    if not shutil.which("ffmpeg") and os.path.exists(os.path.join(_d, "ffmpeg.exe")):
+        os.environ["PATH"] = _d + os.pathsep + os.environ.get("PATH", "")
+TALK_VENV_PY = sys.executable
+TALK_TS_SCRIPT = os.path.join(REPO_ROOT, "scripts", "timestamps_cpu.py")
 ASR_MODEL_DIR = os.path.expanduser(
     "~/.cache/koubo/sherpa-onnx-fire-red-asr2-ctc-zh_en-int8-2026-02-25")
-FFMPEG = "/usr/local/bin/ffmpeg"
+FFMPEG = shutil.which("ffmpeg") or "ffmpeg"
 WINDOW = 60.0          # 每个校验窗口秒数
 EDGE = 0.6             # 窗口边缘丢弃带（音频被截断的条目不计）
 

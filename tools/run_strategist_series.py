@@ -3,7 +3,7 @@
 十大谋士 第3-10期 批量出片（GL-20260918）
 每期：① DeepSeek 生成提示词（强制古代·谋士场景） → ② 流水线 run.py（生图+配音+字幕）
      → ③ 复用共享空镜/前几期图片补齐 → ④ 自动挑片头背景 → ⑤ 流水线重跑加片头 → ⑥ 交付+归档
-用法: ./venv/bin/python tools/run_strategist_series.py [起始期号]
+用法: python tools/run_strategist_series.py [起始期号]
 配额用尽：生图不足时自动用共享空镜 + 前几期图片补满 24 张。
 """
 import json, os, re, shutil, subprocess, sys, time

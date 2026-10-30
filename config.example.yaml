@@ -6,7 +6,7 @@ pipeline:
   name: 历史长音频流水线
   version: 1.0.0
 output:
-  library_root: ~/历史说素材/
+  library_root: C:/历史说素材/
   dirs:
     video: 成片
     images: 图片
@@ -60,18 +60,18 @@ video:
     transition: fade
     duration: 1.0
   encoder_platform:
-    darwin: h264_videotoolbox
-    linux: libx264
+    win32: libx264
   encoder_options:
     libx264:
       crf: 26
       preset: medium
-    h264_videotoolbox:
-      bitrate: 3000k
+    libx264:
+      crf: 26
+      preset: veryfast
   audio_codec: aac
   audio_bitrate: 192k
 subtitle:
-  font_path: /Library/Fonts/AdobeHeitiStd-Regular.otf
+  font_path: C:/Fonts/AdobeHeitiStd-Regular.otf
   font_path_linux: /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc
   font_size: 60
   margin_bottom: 400
@@ -97,7 +97,7 @@ bgm:
   seg_volume: 0.25
   # GL-20260817-04：分段配乐库根目录，按情绪分目录：{悬念|平叙|高潮|收束}/*.mp3
   # 库缺失/情绪缺素材 → 自动退回 path 单 BGM 兜底
-  library_root: ~/历史说素材/bgm/
+  library_root: C:/历史说素材/bgm/
 checks:
   max_line_length: true
   text_integrity: true

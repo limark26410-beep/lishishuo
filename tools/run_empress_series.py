@@ -3,7 +3,7 @@
 十大女将 第3-10期 批量出片（GL-20260910）
 每期：① DeepSeek 生成提示词（强制古代） → ② 流水线 run.py（生图+配音+字幕）
      → ③ 复用共享空镜补齐 → ④ 自动挑片头背景 → ⑤ 流水线重跑加片头 → ⑥ 交付+归档
-用法: ./venv/bin/python tools/run_empress_series.py [起始期号]
+用法: python tools/run_empress_series.py [起始期号]
 """
 import json, os, re, shutil, subprocess, sys, time
 from pathlib import Path

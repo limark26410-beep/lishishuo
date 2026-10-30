@@ -11,7 +11,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageEnhance
 
 # ── 常量 ──
 W = 750                      # 电商详情页标准宽
-FONT_DIR = "/System/Library/Fonts"
+FONT_DIR = "C:/Windows/Fonts"
 F_SONG = os.path.join(FONT_DIR, "Songti.ttc")      # 宋体（标题）
 F_PF   = os.path.join(FONT_DIR, "PingFang.ttc")    # 苹方（正文）
 
@@ -24,7 +24,7 @@ INK     = (60, 48, 36)       # 墨褐
 INK_LT  = (120, 105, 88)     # 浅墨
 RED     = (166, 62, 48)      # 印章红
 
-SRC = "/Users/local/Desktop/钟茂丰"   # 素材目录
+SRC = "C:/素材/钟茂丰"   # 素材目录
 
 
 def font(size, bold=False, song=True):
@@ -393,7 +393,7 @@ def main():
     for s in segs:
         canvas.paste(s.convert("RGB"), (0, y))
         y += s.height
-    out = "/Users/local/Desktop/钟茂丰/茂丰原浆2006年冬酿_详情长图.png"
+    out = "C:/素材/钟茂丰/茂丰原浆2006年冬酿_详情长图.png"
     canvas.save(out)
     print(f"✓ 已保存: {out} ({total_h}px 高)")
     return out

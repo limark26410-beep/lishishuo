@@ -13,12 +13,8 @@ Title clip fixed at 6 seconds (changing breaks -6s subtitle sync).
 import subprocess, os, sys
 from PIL import Image, ImageDraw, ImageFont
 
-# 三平台默认字体（configure 会用 config.yaml 的 subtitle.font_path* 覆盖）
-FONT = {
-    "darwin": "/System/Library/Fonts/PingFang.ttc",
-    "win32": "C:/Windows/Fonts/msyh.ttc",
-    "linux": "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-}.get(sys.platform, "/System/Library/Fonts/PingFang.ttc")
+# 片头默认字体（configure 会用 config.yaml 的 title_card.font_path 覆盖）
+FONT = "C:/Fonts/AdobeKaitiStd-Regular.otf"
 
 # Template constants
 MAIN_FS = 69          # main title (GOLD)
@@ -54,22 +50,27 @@ def configure(cfg: dict):
     W = int(vid.get("width", W))
     H = int(vid.get("height", H))
     FPS = int(vid.get("fps", FPS))
-    # 三平台字体：按平台顺序选第一个存在的
-    order = {
-        "darwin": ("font_path", "font_path_linux", "font_path_windows"),
-        "linux": ("font_path_linux", "font_path", "font_path_windows"),
-        "win32": ("font_path_windows", "font_path", "font_path_linux"),
-    }.get(sys.platform, ("font_path", "font_path_linux", "font_path_windows"))
-    for k in order:
-        fp = sub.get(k)
-        if fp and os.path.exists(fp):
-            FONT = fp
-            break
+    # 字体：优先片头专用字体（Kaiti），回退字幕字体/系统字体
+    fp = tc.get("font_path")
+    if fp and os.path.exists(fp):
+        FONT = fp
+    else:
+        for k in ("font_path", "font_path_windows", "font_path_linux"):
+            fp = sub.get(k)
+            if fp and os.path.exists(fp):
+                FONT = fp
+                break
 
 # PIL colors
 GOLD_RGBA = (212, 175, 55, 255)
 WHITE_RGBA = (232, 232, 224, 255)
 BG_RGBA = (10, 5, 3, 255)
+
+
+def _fontfile_arg(path: str) -> str:
+    """FFmpeg 滤镜里的 Windows 路径：正斜杠 + 盘符冒号转义 + 单引号包住。"""
+    p = str(path).replace("\\", "/").replace(":", "\\:")
+    return f"'{p}'"
 
 
 def render(main_texts, series_text, out_dir, bg_image=None):
@@ -126,7 +127,7 @@ def render(main_texts, series_text, out_dir, bg_image=None):
     for i, (text, y_top) in enumerate(zip(main_texts, main_ys)):
         new_label = f"t{i}"
         parts.append(
-            f"[{label}]drawtext=text='{text}':fontfile={FONT}:"
+            f"[{label}]drawtext=text='{text}':fontfile={_fontfile_arg(FONT)}:"
             f"fontsize={MAIN_FS}:fontcolor={GOLD}:"
             f"borderw=3:bordercolor=black@0.8:"
             f"x=(w-text_w)/2:y={y_top}[{new_label}]"
@@ -136,7 +137,7 @@ def render(main_texts, series_text, out_dir, bg_image=None):
     # Series line - WHITE
     ser_label = "tseries"
     parts.append(
-        f"[{label}]drawtext=text='{series_text}':fontfile={FONT}:"
+        f"[{label}]drawtext=text='{series_text}':fontfile={_fontfile_arg(FONT)}:"
         f"fontsize={SERIES_FS}:fontcolor={WHITE}:"
         f"borderw=2:bordercolor=black@0.8:"
         f"x=(w-text_w)/2:y={series_y}[{ser_label}]"
@@ -154,21 +155,12 @@ def render(main_texts, series_text, out_dir, bg_image=None):
     if use_bg:
         cmd += ["-loop", "1", "-t", str(DUR), "-i", bg_image]
     cmd += ["-filter_complex", fc, "-map", "[vout]",
-            "-c:v", "h264_videotoolbox", "-b:v", "3000k",
+            "-c:v", "libx264", "-crf", "20", "-preset", "veryfast",
             "-pix_fmt", "yuv420p", "-t", str(DUR), clip_path]
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode:
-        # videotoolbox 失败时回退 libx264（不改黑底，只换编码器）
-        cmd2 = ["ffmpeg", "-y"]
-        if use_bg:
-            cmd2 += ["-loop", "1", "-t", str(DUR), "-i", bg_image]
-        cmd2 += ["-filter_complex", fc, "-map", "[vout]",
-                 "-c:v", "libx264", "-crf", "20",
-                 "-pix_fmt", "yuv420p", "-t", str(DUR), clip_path]
-        r = subprocess.run(cmd2, capture_output=True, text=True)
-        if r.returncode:
-            print("FFmpeg failed:", r.stderr[:1000], file=sys.stderr)
-            return None, None
+        print("FFmpeg failed:", r.stderr[:1000], file=sys.stderr)
+        return None, None
 
     # PNG card (preview) —— 有背景图就铺上去
     if use_bg:
@@ -192,15 +184,20 @@ def render(main_texts, series_text, out_dir, bg_image=None):
     for text, y_top in zip(main_texts, main_ys):
         fm = ImageFont.truetype(FONT, MAIN_FS)
         bm = fm.getbbox(text)
-        draw.text(((W - (bm[2] - bm[0])) // 2, y_top), text, GOLD_RGBA, font=fm)
+        draw.text(((W - (bm[2] - bm[0])) // 2, y_top), text, GOLD_RGBA,
+                  font=fm, stroke_width=2, stroke_fill=(0, 0, 0, 220))
 
     fs = ImageFont.truetype(FONT, SERIES_FS)
     bs = fs.getbbox(series_text)
-    draw.text(((W - (bs[2] - bs[0])) // 2, series_y), series_text, WHITE_RGBA, font=fs)
+    draw.text(((W - (bs[2] - bs[0])) // 2, series_y), series_text, WHITE_RGBA,
+              font=fs, stroke_width=1, stroke_fill=(0, 0, 0, 200))
 
     for y in range(GL_H):
         for x in range(GL_W):
             draw.point((gl_x + x, gl_y + y), GOLD_RGBA)
+    # 片头卡最终要整张盖在正片上：半透明压暗条已把 RGB 压暗，
+    # alpha 必须恢复为 255，否则 flag/人物会透过来，标题发灰。
+    img.putalpha(255)
     img.save(card_path)
 
     sz_mb = os.path.getsize(clip_path) / 1024 / 1024

@@ -3,7 +3,7 @@
 茂丰原浆2006冬酿 · AI 补缺场景图（qwen-image-3.0-pro 免费额度）
 只生成真图没有的氛围场景：鉴湖风光 / 老酒坊（品牌故事缺图）
 9:16 竖版 1080x1920，国风写实无文字
-用法: ./venv/bin/python tools/gen_scene_imgs.py
+用法: python tools/gen_scene_imgs.py
 """
 import os, time
 import requests

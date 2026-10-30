@@ -42,13 +42,13 @@
 
 ```bash
 # 本地图片（跳过线上生图）
-./venv/bin/python run.py --episode 001 --images-dir /你的图片目录
+python run.py --episode 001 --images-dir C:\你的图片目录
 
 # 本地视频素材（走视频混剪，不生成图片）
-./venv/bin/python run.py --episode 001 --video-dir /你的视频素材库
+python run.py --episode 001 --video-dir C:\你的视频素材库
 
 # 或者手动把图片放进 episodes/001/images/，然后 --skip-images
-./venv/bin/python run.py --episode 001 --skip-images
+python run.py --episode 001 --skip-images
 ```
 
 ---
@@ -61,21 +61,21 @@ git clone https://github.com/limark26410-beep/lishishuo.git
 cd lishishuo
 
 # 2. 装依赖
-python3 -m venv venv && source venv/bin/activate
+python -m venv venv && venv\Scripts\activate
 pip install -r requirements.txt
-# 另需安装真实版 ffmpeg（brew install ffmpeg）
+# 另需安装 ffmpeg（Windows 版，解压后把 bin 加入 PATH）
 
 # 3. 填你自己的 API Key（谁用谁注册，各填各的，不共耗账号）
 cp .env.example .env
 # 编辑 .env，填 6 个 key（文件里有每个 key 的注册地址）
 
-# 4. 改素材库路径（可选，默认 ~/Desktop/历史说素材）
+# 4. 改素材库路径（可选，默认 C:\历史说素材）
 # 方法A：改 config.yaml 的 paths.material_root
 # 方法B：export LISHISHUO_MATERIAL_ROOT=/你的素材库路径
 
 # 5. 跑
-./venv/bin/python run.py --episode 001                       # 历史说
-./venv/bin/python run_baijiu.py ~/Desktop/白酒短剧/清引_第1集   # 白酒短剧
+python run.py --episode 001                       # 历史说
+python run_baijiu.py C:\白酒短剧\清引_第1集   # 白酒短剧
 ```
 
 ---
@@ -85,10 +85,10 @@ cp .env.example .env
 输入 `episodes/{期号}/script.txt` + `prompts.json` → 输出 `final.mp4`（配音 + 生图 + Ken Burns + 字幕 + 配乐 + 片头）。
 
 ```bash
-./venv/bin/python run.py --episode 001
-./venv/bin/python run.py --episode 001 --dry-run          # 检查素材
-./venv/bin/python run.py --episode 001 --skip-tts         # 跳过配音（重跑混剪）
-./venv/bin/python run.py --episode 001 --skip-images      # 跳过生图（重跑混剪）
+python run.py --episode 001
+python run.py --episode 001 --dry-run          # 检查素材
+python run.py --episode 001 --skip-tts         # 跳过配音（重跑混剪）
+python run.py --episode 001 --skip-images      # 跳过生图（重跑混剪）
 ```
 
 常用参数：`--title 主·副 --series 系列名 --name 归档名 --canvas portrait --rate -4%`。
@@ -113,7 +113,7 @@ cp .env.example .env
 一条命令跑完三步（智谱生视频 → 豆包多角色配音 → 拼装）：
 
 ```bash
-./venv/bin/python run_baijiu.py ~/Desktop/白酒短剧/清引_第1集
+python run_baijiu.py C:\白酒短剧\清引_第1集
 # 免费档 cogvideox-flash（5s/段）；付费档：加参数 cogvideox-3（10s/段）
 ```
 
@@ -142,7 +142,7 @@ lishishuo/
 | `paths.material_root` | 素材库根目录（共享空镜/片头背景/bgm/归档），可改 |
 | `image.provider` | `tongyi`（通义万相 wanx） / `zhipu`（智谱） |
 | `tts.engine` | `edge`（微软） / `doubao`（豆包，更自然） |
-| `video.encoder` | `libx264` / `h264_videotoolbox` / `auto` |
+| `video.encoder` | `libx264`（固定软编码） |
 
 ## 状态
 

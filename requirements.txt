@@ -2,9 +2,14 @@
 # 历史说主流程 + 白酒短剧流程 + 批量脚本都用这套
 pyyaml
 pillow
-edge-tts
+# edge-tts 必须 >= 7.3.0：老版本会 403（微软改了鉴权，不是网络问题）
+edge-tts>=7.3.0
 requests
 python-docx
 aiohttp
+# aiodns 供 tts_utils 自定义 DNS（绕过代理/劫持）
+aiodns
 numpy
 openpyxl
+# 字幕 ASR 强制对齐（scripts/timestamps_cpu.py）
+sherpa-onnx>=2.0.0

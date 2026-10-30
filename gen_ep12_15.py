@@ -4,7 +4,7 @@ from docx import Document
 from docx.shared import Pt
 import os
 
-output_dir = os.path.expanduser("~/Desktop/历史说素材/稿子")
+output_dir = os.path.expanduser("C:/历史说素材/稿子")
 os.makedirs(output_dir, exist_ok=True)
 
 episodes = {}

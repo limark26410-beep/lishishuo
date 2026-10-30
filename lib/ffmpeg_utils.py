@@ -3,9 +3,8 @@ FFmpeg 工具模块
 Ken Burns 静图动效 + concat/xfade 拼接 + 烧字幕 + 混音
 
 编码器策略：
-- macOS 本地开发 → h264_videotoolbox（GPU 硬件加速，需要 brew install ffmpeg）
-- Linux 生产     → libx264 + veryfast（CPU 软编码，多核友好）
-- 通过 config.encoder 切换，自动探测平台
+- 统一 libx264 + veryfast（CPU 软编码，Windows/Linux/macOS 通用）
+- 不使用任何硬件编码器：稳定性优先，避免平台独有编码器拖垮整期
 """
 
 import subprocess
@@ -44,32 +43,23 @@ def probe_video_size(path: str):
 
 def _detect_platform_encoder(cfg: dict) -> tuple:
     """
-    根据 config + 平台自动选择编码器参数
+    固定使用 libx264 软编码。
     返回 (codec, encoder_args_list)
     """
     video_cfg = cfg.get("video", {})
     encoder = video_cfg.get("encoder", "libx264")
+    if encoder != "libx264":
+        print(f"  ⚠ 配置的编码器 {encoder} 已禁用，统一改用 libx264")
+        encoder = "libx264"
 
-    # 探测平台，自动切换
-    platform = sys.platform
-    platform_map = video_cfg.get("encoder_platform", {})
-    if encoder == "auto":
-        encoder = platform_map.get(platform, "libx264")
-
-    opts = video_cfg.get("encoder_options", {}).get(encoder, {})
+    opts = video_cfg.get("encoder_options", {}).get("libx264", {})
     base = ["-pix_fmt", video_cfg.get("pixel_format", "yuv420p")]
 
-    if encoder == "h264_videotoolbox":
-        return encoder, [
-            "-c:v", "h264_videotoolbox",
-            "-b:v", opts.get("bitrate", "3000k"),
-        ] + base
-    else:
-        return encoder, [
-            "-c:v", "libx264",
-            "-preset", opts.get("preset", "veryfast"),
-            "-crf", str(opts.get("crf", 22)),
-        ] + base
+    return encoder, [
+        "-c:v", "libx264",
+        "-preset", opts.get("preset", "veryfast"),
+        "-crf", str(opts.get("crf", 22)),
+    ] + base
 
 
 def _build_encoder_args(cfg: dict) -> list:

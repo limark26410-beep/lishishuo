@@ -79,9 +79,9 @@ def _render_card_png(text: str, out_path: str) -> None:
     if Image is None:
         return
     font = None
-    for fp in ("/Library/Fonts/AdobeHeitiStd-Regular.otf",
-               "/System/Library/Fonts/PingFang.ttc",
-               "/Library/Fonts/Arial Unicode.ttf"):
+    for fp in ("C:/Fonts/AdobeHeitiStd-Regular.otf",
+               "C:/Fonts/AdobeKaitiStd-Regular.otf",
+               "C:/Windows/Fonts/msyh.ttc"):
         if os.path.exists(fp):
             try:
                 font = ImageFont.truetype(fp, FONT_SIZE)

@@ -17,7 +17,7 @@ import requests
 
 import yt_dlp
 
-DEFAULT_ROOT = os.path.expanduser("~/Desktop/历史说素材/视频/")
+DEFAULT_ROOT = os.path.expanduser("C:/历史说素材/视频/")
 
 # B 站 buvid cookie 缓存（防 412 反爬）
 _BVID_COOKIE = {"v": ""}
@@ -107,14 +107,12 @@ def _pexels_api_key() -> str:
 
 
 def _read_env_key(name: str) -> str:
-    """读 .env 里的 key"""
-    env = os.path.expanduser("~/.env")
-    for cand in ("~/.env", "~/Desktop/历史说素材/.env", "/Users/local/lishishuo/.env"):
-        p = os.path.expanduser(cand)
-        if os.path.exists(p):
-            for ln in open(p, encoding="utf-8"):
-                if ln.strip().startswith(name):
-                    return ln.split("=", 1)[-1].strip()
+    """读仓库根目录 .env 里的 key"""
+    env = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+    if os.path.exists(env):
+        for ln in open(env, encoding="utf-8"):
+            if ln.strip().startswith(name):
+                return ln.split("=", 1)[-1].strip()
     return ""
 
 

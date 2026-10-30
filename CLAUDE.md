@@ -20,7 +20,7 @@
 - **去标题**：喂 TTS 前删掉脚本第一行标题，只送正文（钩子开头）。标题仅用于片头画面。
 
 ## 编码
-- 生产用 libx264（videotoolbox 是 macOS 独有，不上生产）
+- 生产用 libx264（固定软编码，不用平台硬件编码器）
 - 最终导出：libx264 CRF 26 preset medium（每期成片二次压，≈330MB/24min）
 - 字幕烧录：h264+colorkey 黑底透明（PIL 渲染 PNG → h264 字幕轨 → colorkey 抠黑 → overlay）。不再用 libass/subtitles 滤镜。
 - **TODO**: h264+colorkey 是当前方案，深色/纯黑场景可能抠出毛刺描边；待办：装含 libass 的 ffmpeg、改用 `-vf subtitles` 直烧替代。
@@ -93,4 +93,4 @@
 
 ## 成片归档
 - 归档根目录以 config `output.library_root` 为准（web 高级设置「素材库归档根目录」可改），旧文"~/Desktop/历史说/"为早期示例已过时
-- 素材归档 ~/Desktop/历史说素材/（成片/图片/录音/稿子 四类）
+- 素材归档 C:/历史说素材/（成片/图片/录音/稿子 四类）

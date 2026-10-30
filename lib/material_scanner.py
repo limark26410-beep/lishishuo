@@ -3,7 +3,7 @@
 
 目录规范（定稿 v2.3）：
     {素材库根}/{题材}/{主题}_{编号}.mp4
-    例：~/历史说素材/视频/历史/隋唐/唐-长安城_01.mp4
+    例：C:/历史说素材/视频/历史/隋唐/唐-长安城_01.mp4
   - 题材 = 根目录下第一级目录（历史/商品/美食…）
   - 主题 = 第二级目录（隋唐…），无第二级则空
   - README.txt：每个主题目录一份，每行 `文件名：画面内容描述`，
@@ -228,7 +228,7 @@ def scan_material(library_root: str, max_workers: int = 4) -> list:
 
 if __name__ == "__main__":
     import sys as _sys
-    root = _sys.argv[1] if len(_sys.argv) > 1 else "~/历史说素材/视频/"
+    root = _sys.argv[1] if len(_sys.argv) > 1 else "C:/历史说素材/视频/"
     mats = scan_material(root)
     print(f"\n素材清单（{len(mats)} 条）:")
     for m in mats:

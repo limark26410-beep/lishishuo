@@ -7,7 +7,7 @@
   ③ assemble 拼装（片头 + 视频 + 配音 + 字幕 + 配乐）
 
 用法：
-  ./venv/bin/python run_baijiu.py <项目目录> [model]
+  python run_baijiu.py <项目目录> [model]
   model 缺省 cogvideox-flash（免费 5s/段）；付费档传 cogvideox-3（10s/段）
 
 项目目录需含 project.json：

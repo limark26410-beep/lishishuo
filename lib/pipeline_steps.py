@@ -156,15 +156,18 @@ def build_ai_title_clip(
     - 标题下方加半透明压暗条（任何画面都清晰，不会花）
     """
     tc = (cfg or {}).get("title_card", {})
-    font = tc.get("font", "/System/Library/Fonts/PingFang.ttc")
+    font = tc.get("font_path", "C:/Fonts/AdobeKaitiStd-Regular.otf")
     if not os.path.exists(font):
-        font = "/System/Library/Fonts/STHeiti Light.ttc"
+        font = "C:/Windows/Fonts/msyh.ttc"
     # 标题文字转义（drawtext 特殊字符）
     def _esc(s):
         return (str(s).replace("\\", "\\\\").replace(":", "\\:")
                 .replace("'", "\\'").replace("%", "\\%"))
+    def _ff_path(p):
+        return "'" + str(p).replace("\\", "/").replace(":", "\\:") + "'"
     title_esc = _esc(title_text)
     series_esc = _esc(series_text)
+    font_arg = _ff_path(font)
     fs_main = int(height * 0.065)      # 主标题字号
     fs_ser = int(height * 0.032)       # 系列名字号
     # 标题区位置（垂直居中偏下）+ 压暗条
@@ -179,11 +182,11 @@ def build_ai_title_clip(
         # 半透明压暗条（标题区），保证文字清晰
         f"drawbox=x=0:y={band_top}:w={width}:h={band_h}:"
         f"color=black@0.45:t=fill,"
-        f"drawtext=fontfile={font}:text='{title_esc}':"
+        f"drawtext=fontfile={font_arg}:text='{title_esc}':"
         f"fontsize={fs_main}:fontcolor=white:"
         f"x=(w-text_w)/2:y={tf_y}:"
         f"shadowcolor=black@0.8:shadowx=2:shadowy=2,"
-        f"drawtext=fontfile={font}:text='{series_esc}':"
+        f"drawtext=fontfile={font_arg}:text='{series_esc}':"
         f"fontsize={fs_ser}:fontcolor=0xD4AF37:"
         f"x=(w-text_w)/2:y={sf_y}:"
         f"shadowcolor=black@0.8:shadowx=2:shadowy=2"
@@ -303,7 +306,7 @@ def archive_episode(
     episode_name 形如 "16-唐朝"
     """
     out_cfg = (cfg or {}).get("output", {})
-    root = os.path.expanduser(out_cfg.get("library_root", "~/Desktop/历史说素材"))
+    root = os.path.expanduser(out_cfg.get("library_root", "C:/历史说素材"))
     dirs = out_cfg.get("dirs", {})
     backup = out_cfg.get("backup_before_overwrite", True)
 

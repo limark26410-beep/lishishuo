@@ -24,7 +24,7 @@
 
 用法（CLI）
 ----------
-    ./venv/bin/python lib/gen_first_frame.py <项目目录> [镜号|all]
+    python lib/gen_first_frame.py <项目目录> [镜号|all]
 
 依赖
 ----

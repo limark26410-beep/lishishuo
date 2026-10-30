@@ -4,9 +4,9 @@ pipeline:
 paths:
   # 素材库根目录：共享空镜/片头背景/bgm/系列归档都在它下面
   # 同事改成自己的路径即可；也可用环境变量 LISHISHUO_MATERIAL_ROOT 覆盖
-  material_root: ~/Desktop/历史说素材
+  material_root: C:/历史说素材
 output:
-  library_root: /Users/local/Desktop/历史说素材/红楼梦/
+  library_root: C:/历史说素材
   dirs:
     video: 成片
     images: 图片
@@ -76,16 +76,14 @@ video:
   xfade:
     transition: fade
     duration: 1.0
+  # 一律软编码：libx264 最稳，Windows 上没有硬件编码器可用。
+  encoder: libx264
   encoder_platform:
-    darwin: h264_videotoolbox
-    linux: libx264
     win32: libx264
   encoder_options:
     libx264:
       crf: 26
       preset: veryfast
-    h264_videotoolbox:
-      bitrate: 3000k
   audio_codec: aac
   audio_bitrate: 192k
   mode: image
@@ -93,7 +91,7 @@ video:
     enabled: true
     keep: 0.7
 subtitle:
-  font_path: /Library/Fonts/AdobeHeitiStd-Regular.otf
+  font_path: C:/Fonts/AdobeHeitiStd-Regular.otf
   font_path_linux: /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc
   font_size: 60
   margin_bottom: 400
@@ -101,8 +99,9 @@ subtitle:
   max_chars_per_line: 14
   max_lines: 2
   outline_width: 3
-  font_path_windows: C:/Windows/Fonts/msyh.ttc
+  font_path_windows: C:/Fonts/AdobeHeitiStd-Regular.otf
 title_card:
+  font_path: C:/Fonts/AdobeKaitiStd-Regular.otf
   duration: 2
   main_font_size: 69
   series_font_size: 36
@@ -117,7 +116,7 @@ bgm:
   path: assets/bgm.mp3
   volume: 0.12
   seg_volume: 0.25
-  library_root: /Users/local/Desktop/历史说素材/bgm/
+  library_root: C:/历史说素材/bgm/
 checks:
   max_line_length: true
   text_integrity: true
@@ -128,7 +127,7 @@ cleanup:
   clean_clips: true
   clean_images: false
 video_source:
-  root: /Users/local/Desktop/视频素材/
+  root: C:/历史说素材/视频素材/
 dropbox:
   enabled: false
   watch_dir: ~/历史说素材/投递/

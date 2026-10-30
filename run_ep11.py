@@ -89,7 +89,7 @@ final_out = f"{EP}/final.mp4"
 subprocess.run(["ffmpeg", "-y", "-i", f"{EP}/title_clip.mp4", "-i", subtitled,
     "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0[v]",
     "-map", "[v]", "-map", "1:a",
-    "-c:v", "h264_videotoolbox", "-b:v", "3000k",
+    "-c:v", "libx264", "-crf", "20", "-preset", "veryfast",
     "-pix_fmt", "yuv420p", "-c:a", "copy", "-shortest", final_out],
     check=True, capture_output=True, text=True, timeout=600)
 fd = get_media_duration(final_out)

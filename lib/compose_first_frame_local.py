@@ -28,7 +28,7 @@
             {"img": "首帧素材/二哥_全身正面.png", "height": 0.70, "x": 0.68, "bottom": 0.94},
         ])
 
-CLI：./venv/bin/python lib/compose_first_frame_local.py <配置json>
+CLI：python lib/compose_first_frame_local.py <配置json>
 """
 from __future__ import annotations
 

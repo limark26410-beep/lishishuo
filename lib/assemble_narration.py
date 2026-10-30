@@ -14,7 +14,7 @@
         ↓
     字幕用旁白真实时间轴烧录
 
-用法：./venv/bin/python lib/assemble_narration.py <项目目录> [输出路径]
+用法：python lib/assemble_narration.py <项目目录> [输出路径]
 依赖：项目目录下需有
   narration.json    旁白稿（segments: id/emotion/text/shots）
   旁白/segN.mp3     每段旁白音频
@@ -247,7 +247,7 @@ def main():
     print(f"  ✓ 旁白轨 {dur_of(str(nar)):.2f}s")
 
     # ── 5. 配乐（按段落情绪）──
-    bgm_root = Path(os.path.expanduser("~/Desktop/历史说素材/bgm"))
+    bgm_root = Path(os.path.expanduser("C:/历史说素材/bgm"))
     bgm_parts = []
     for seg in tl["segments"]:
         d = seg["dur"]

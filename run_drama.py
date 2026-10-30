@@ -26,13 +26,13 @@ project.json 里，**某一场只要有 first_frame 字段就走 i2v 链路**；
     }
 
 用法：
-  ./venv/bin/python run_drama.py <项目目录> [--slot 5] [--dry-run]
-  ./venv/bin/python run_drama.py <项目目录> --only-s07     # 只跑某几镜（试片用）
-  ./venv/bin/python run_drama.py <项目目录> --skip-video   # 复用已有 seg_*.mp4
+  python run_drama.py <项目目录> [--slot 5] [--dry-run]
+  python run_drama.py <项目目录> --only-s07     # 只跑某几镜（试片用）
+  python run_drama.py <项目目录> --skip-video   # 复用已有 seg_*.mp4
 
 分步跑（推荐先试一镜）：
-  ./venv/bin/python lib/gen_first_frame.py <项目目录> 7   # 只合成 S07 首帧
-  ./venv/bin/python run_drama.py <项目目录> --skip-first-frame --only 7
+  python lib/gen_first_frame.py <项目目录> 7   # 只合成 S07 首帧
+  python run_drama.py <项目目录> --skip-first-frame --only 7
 """
 import argparse
 import json

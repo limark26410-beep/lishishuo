@@ -10,7 +10,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 
 # ── 默认值（可被 configure() 覆盖）──
-FONT_PATH = "/Library/Fonts/AdobeHeitiStd-Regular.otf"
+FONT_PATH = "C:/Fonts/AdobeHeitiStd-Regular.otf"
 FONT_SIZE = 60
 IMG_W = 1080
 IMG_H = 1920
@@ -40,12 +40,8 @@ NO_SPLIT_TERMS = sorted(set([
 
 
 def _pick_font(sub: dict) -> str:
-    """按平台优先顺序选第一个存在的字体（三平台）"""
-    order = {
-        "darwin": ("font_path", "font_path_linux", "font_path_windows"),
-        "linux": ("font_path_linux", "font_path", "font_path_windows"),
-        "win32": ("font_path_windows", "font_path", "font_path_linux"),
-    }.get(sys.platform, ("font_path", "font_path_linux", "font_path_windows"))
+    """按 Windows 优先顺序选第一个存在的字体"""
+    order = ("font_path_windows", "font_path", "font_path_linux")
     for k in order:
         fp = sub.get(k)
         if fp and os.path.exists(fp):
@@ -381,9 +377,7 @@ def burn_subtitles_overlay(
 
     sv = os.path.join(tmp_dir, "subs.mp4")
     print(f"  字幕轨逐帧铺图 {n_frames} 帧 @{FPS}fps（{total:.2f}s）...")
-    # 字幕轨只有 1080x300，用软件编码 libx264：便宜，且不依赖硬件编码器。
-    # （GL-20260911 实测 h264_videotoolbox 跑几小时后会 "Could not open encoder
-    #   before EOF" 直接失败，退出码 187，整期出片中断。）
+    # 字幕轨只有 1080x300，用软件编码 libx264：便宜，且不依赖平台编码器。
     subprocess.run([
         "ffmpeg", "-y", "-loglevel", "error", "-framerate", str(FPS),
         "-i", os.path.join(fdir, "%06d.png"),
@@ -396,7 +390,7 @@ def burn_subtitles_overlay(
     # Overlay Y: subtitle bar sits at bottom with MARGIN_BOTTOM clearance
     ov_y = IMG_H - BAR_HEIGHT - MARGIN_BOTTOM  # 1920 - 300 - 140 = 1480
     enc = encode_args or [
-        "-c:v", "h264_videotoolbox", "-b:v", "3000k",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
         "-c:a", "copy",
     ]
 
@@ -409,11 +403,11 @@ def burn_subtitles_overlay(
         f"[0:v][sub]overlay=0:{ov_y}[v]",
         "-map", "[v]", "-map", "0:a",
     ]
-    # 硬件编码器偶发不可用 → 自动回退软件编码，别让整期出片挂在最后一步
+    # 编码失败 → 回退 libx264，别让整期出片挂在最后一步
     r = subprocess.run(base + enc + [output_path],
                        capture_output=True, text=True, timeout=1800)
     if r.returncode != 0:
-        print("  ⚠ 硬件编码失败，回退 libx264 重试...")
+        print("  ⚠ 编码失败，回退 libx264 重试...")
         soft = ["-c:v", "libx264", "-preset", "medium", "-crf", "20", "-c:a", "copy"]
         r2 = subprocess.run(base + soft + [output_path],
                             capture_output=True, text=True, timeout=3600)

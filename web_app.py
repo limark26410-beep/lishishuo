@@ -34,8 +34,8 @@ PORT = 8765
 # edge-tts 和系统 ffmpeg；这里把 venv/bin + 常见 ffmpeg 安装目录 + which 探测结果
 # 全部补进 PATH，让 run.py 等子进程都能继承到。ffmpeg 由使用者自装，
 # 工具只负责找到它；实在找不到则按平台提示安装命令。
-_path_dirs = [str(BASE_DIR / "venv/bin")]
-for _d in ("/usr/local/bin", "/opt/homebrew/bin", "/opt/ffmpeg/bin"):
+_path_dirs = [str(BASE_DIR / ("venv" / "Scripts" if os.name == "nt" else "venv" / "bin"))]
+for _d in (("C:/ffmpeg/bin", "C:/MV_WT/tools/ffmpeg") if os.name == "nt" else ()):
     if os.path.isdir(_d) and _d not in _path_dirs:
         _path_dirs.append(_d)
 _ffmpeg = shutil.which("ffmpeg")
@@ -43,12 +43,9 @@ if _ffmpeg:
     _d = os.path.dirname(_ffmpeg)
     if _d not in _path_dirs:
         _path_dirs.append(_d)
-os.environ["PATH"] = ":".join(_path_dirs + [os.environ.get("PATH", "")])
+os.environ["PATH"] = os.pathsep.join(_path_dirs + [os.environ.get("PATH", "")])
 if not shutil.which("ffmpeg"):
-    _hint = {
-        "darwin": "brew install ffmpeg",
-        "win32": "winget install ffmpeg（或从 https://www.gyan.dev/ffmpeg/builds/ 下载）",
-    }.get(sys.platform, "sudo apt install ffmpeg 或 sudo yum install ffmpeg")
+    _hint = "winget install ffmpeg（或从 https://www.gyan.dev/ffmpeg/builds/ 下载）"
     print(f"⚠ 未检测到 ffmpeg，请先安装：{_hint}（详见 使用说明.md）")
 
 # 加载 .env 到环境变量（不覆盖已存在的），供 run.py 子进程继承生图 key
@@ -481,8 +478,8 @@ def _dropbox_cfg() -> dict:
     d = load_cfg().get("dropbox", {}) or {}
     return {
         "enabled": bool(d.get("enabled", False)),
-        "watch_dir": d.get("watch_dir", "~/历史说素材/投递/"),
-        "out_dir": d.get("out_dir", "~/历史说素材/成片/"),
+        "watch_dir": d.get("watch_dir", "C:/历史说素材/投递/"),
+        "out_dir": d.get("out_dir", "C:/历史说素材/成片/"),
         "interval_sec": int(d.get("interval_sec", 5)),
         "series": d.get("series", ""),
     }
@@ -565,7 +562,7 @@ def _process_drop_item(item: dict):
 
     # 素材库：题材 → {video_source.root}/{题材}，否则默认库
     video_lib = load_cfg().get("video_source", {}).get(
-        "root", "~/历史说素材/视频/")
+        "root", "C:/历史说素材/视频/")
     if topic:
         video_lib = os.path.join(os.path.expanduser(video_lib), topic)
 
@@ -768,8 +765,13 @@ class Handler(BaseHTTPRequestHandler):
                 {"name": "zh-TW-YunJheNeural",    "label": "云哲 · 男声 · 台湾腔"},
             ]
             try:
-                r = subprocess.run([str(BASE_DIR / "venv/bin/edge-tts"), "--list-voices"],
-                                   capture_output=True, text=True, timeout=25)
+                _edge = shutil.which("edge-tts") or str(
+                    BASE_DIR / "venv" / "Scripts" / "edge-tts.exe")
+                _env = dict(os.environ, NO_PROXY="*", no_proxy="*",
+                            HTTP_PROXY="", HTTPS_PROXY="")
+                r = subprocess.run([_edge, "--list-voices"],
+                                   capture_output=True, text=True, timeout=25,
+                                   env=_env)
                 names = sorted(set(re.findall(r"(zh-[A-Za-z\-]+Neural)", r.stdout)))
                 if names:
                     known = {v["name"]: v["label"] for v in fallback}
@@ -828,7 +830,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 cfg = load_cfg()
                 root = os.path.expanduser(
-                    cfg.get("video_source", {}).get("root", "~/历史说素材/视频/"))
+                    cfg.get("video_source", {}).get("root", "C:/历史说素材/视频/"))
                 topics = []
                 if os.path.isdir(root):
                     topics = sorted(
@@ -1407,7 +1409,7 @@ class Handler(BaseHTTPRequestHandler):
                          or data.get("library") or "")
             if not video_lib:
                 video_lib = load_cfg().get("video_source", {}).get(
-                    "root", "~/历史说素材/视频/")
+                    "root", "C:/历史说素材/视频/")
             video_lib = os.path.expanduser(video_lib)
 
             try:
@@ -1572,24 +1574,22 @@ class Handler(BaseHTTPRequestHandler):
             # 文件类型：稿子选 docx/txt/md，背景图选图片格式
             ftypes = data.get("types", None)
             try:
-                if sys.platform == "darwin":
+                if sys.platform == "win32":
+                    import tkinter as _tk
+                    from tkinter import filedialog
+                    _root = _tk.Tk()
+                    _root.withdraw()
+                    _root.attributes("-topmost", True)
                     if kind == "dir":
-                        script = 'POSIX path of (choose folder with prompt "选择图片目录")'
+                        path = filedialog.askdirectory(title="选择图片目录")
                     else:
-                        if ftypes:
-                            type_str = ",".join(f'"{t}"' for t in ftypes)
-                        else:
-                            type_str = '"docx","txt","md"'
-                        script = (f'POSIX path of (choose file with prompt "选择文件" '
-                                  f'of type {{{type_str}}})')
-                    r = subprocess.run(["osascript", "-e", script],
-                                       capture_output=True, text=True, timeout=180)
-                    path = r.stdout.strip()
+                        path = filedialog.askopenfilename(title="选择文件")
+                    _root.destroy()
                     if not path:
                         return self._json({"ok": False, "msg": "已取消"})
                     return self._json({"ok": True, "path": path})
                 else:
-                    # Linux/其他：尝试 zenity
+                    # 其他平台：尝试 zenity
                     args = ["zenity", "--file-selection"]
                     if kind == "dir":
                         args.append("--directory")
@@ -1604,8 +1604,11 @@ class Handler(BaseHTTPRequestHandler):
         if u.path == "/api/open-folder":
             d = data.get("dir", "")
             if os.path.isdir(d):
-                opener = "open" if sys.platform == "darwin" else "xdg-open"
-                subprocess.Popen([opener, d])
+                if sys.platform == "win32":
+                    os.startfile(d)
+                else:
+                    opener = "xdg-open"
+                    subprocess.Popen([opener, d])
                 return self._json({"ok": True})
             return self._json({"ok": False, "msg": "目录不存在"})
 
@@ -1640,13 +1643,10 @@ def main():
     print(f"   用完关掉此窗口即可退出\n")
     print(f"{'='*44}\n")
 
-    # macOS 用系统 open 命令最可靠；其他平台退回 webbrowser
+    # Windows 交给 webbrowser；Linux 用 xdg-open
     opened = False
     try:
-        if sys.platform == "darwin":
-            subprocess.Popen(["open", url])
-            opened = True
-        elif sys.platform.startswith("linux"):
+        if sys.platform.startswith("linux"):
             subprocess.Popen(["xdg-open", url])
             opened = True
         else:

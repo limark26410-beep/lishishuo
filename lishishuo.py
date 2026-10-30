@@ -4,7 +4,7 @@
 用法：
     python -m lishishuo \\
         --script 稿子.txt \\
-        --素材库 ~/历史说素材/视频/商品/ \\
+        --素材库 C:/历史说素材/视频/商品/ \\
         --duration 3 \\
         --output ./output/
 
@@ -88,9 +88,9 @@ def main():
         import yaml
         try:
             cfg = yaml.safe_load(open(args.config, encoding="utf-8")) or {}
-            video_dir = cfg.get("video_source", {}).get("root", "~/历史说素材/视频/")
+            video_dir = cfg.get("video_source", {}).get("root", "C:/历史说素材/视频/")
         except Exception:
-            video_dir = "~/历史说素材/视频/"
+            video_dir = "C:/历史说素材/视频/"
         video_dir = os.path.expanduser(video_dir)
         print(f"  素材库（config 缺省）: {video_dir}")
 

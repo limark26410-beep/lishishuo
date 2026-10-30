@@ -11,10 +11,27 @@
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+for _d in (r"C:\ffmpeg\bin", r"C:\MV_WT\tools\ffmpeg"):
+    if not shutil.which("ffmpeg") and os.path.exists(os.path.join(_d, "ffmpeg.exe")):
+        os.environ["PATH"] = _d + os.pathsep + os.environ.get("PATH", "")
+FFMPEG = shutil.which("ffmpeg") or "ffmpeg"
+
+# Commons / Pexels 必须走代理（国内直连 Commons 不通）。
+# 默认本机代理 127.0.0.1:7897；可用环境变量 LISHISHUO_PROXY 覆盖，
+# 设成 direct/none/off 可强制直连（不建议，Commons 会失败）。
+_PROXY = os.environ.get("LISHISHUO_PROXY", "http://127.0.0.1:7897").strip()
+if _PROXY and _PROXY.lower() not in ("direct", "none", "off"):
+    os.environ.setdefault("HTTP_PROXY", _PROXY)
+    os.environ.setdefault("HTTPS_PROXY", _PROXY)
+    os.environ.setdefault("ALL_PROXY", _PROXY)
 
 # 每期素材源配置
 # 经验（实测）：Pexels 只适合"明确地标英文名"（Terracotta Army / Forbidden City），
@@ -206,7 +223,10 @@ def _grade_filter() -> str:
 
 
 def load_pexels_key() -> str:
-    env = Path("/Users/local/lishishuo/.env")
+    key = os.environ.get("PEXELS_API_KEY", "").strip()
+    if key:
+        return key
+    env = REPO_ROOT / ".env"
     for ln in env.read_text(encoding="utf-8").splitlines():
         if ln.strip().startswith("PEXELS_API_KEY"):
             return ln.split("=", 1)[1].strip()
@@ -301,7 +321,7 @@ def search_commons(query: str, want: int) -> list[dict]:
 
 def download_and_grade(url: str, out_path: str) -> bool:
     """下载 + 竖屏化（竖版直裁；横版模糊填充，保住完整画面）+ 调色"""
-    tmp = "/tmp/_city_fetch_raw.jpg"
+    tmp = os.path.join(tempfile.gettempdir(), "_city_fetch_raw.jpg")
     subprocess.run(["curl", "-sL", "--connect-timeout", "20", "--max-time", "90",
                     "-H", "User-Agent: lishishuo-image-fetch/1.0",
                     url, "-o", tmp], capture_output=True, text=True)
@@ -309,7 +329,7 @@ def download_and_grade(url: str, out_path: str) -> bool:
         return False
 
     # 探测尺寸与格式
-    probe = subprocess.run(["/usr/local/bin/ffmpeg", "-i", tmp],
+    probe = subprocess.run([FFMPEG, "-i", tmp],
                            capture_output=True, text=True)
     m = re.search(r"(\d{3,5})x(\d{3,5})", probe.stderr)
     if not m:
@@ -331,7 +351,7 @@ def download_and_grade(url: str, out_path: str) -> bool:
               f"[fg]{grade}[fgb];"
               f"[bgb][fgb]overlay=(W-w)/2:(H-h)/2")
 
-    cmd = ["/usr/local/bin/ffmpeg", "-y", "-loglevel", "error", "-i", tmp]
+    cmd = [FFMPEG, "-y", "-loglevel", "error", "-i", tmp]
     if is_portrait:
         cmd += ["-vf", vf]
     else:
@@ -353,7 +373,7 @@ def main():
         raise SystemExit(f"期号 {episode} 未配置关键词")
 
     key = load_pexels_key()
-    out_dir = f"/Users/local/lishishuo/episodes/{episode}/images"
+    out_dir = str(REPO_ROOT / "episodes" / episode / "images")
     os.makedirs(out_dir, exist_ok=True)
 
     sources = []
@@ -391,7 +411,7 @@ def main():
                 time.sleep(0.4)
 
     if not dry:
-        src_path = f"/Users/local/lishishuo/episodes/{episode}/sources.md"
+        src_path = str(REPO_ROOT / "episodes" / episode / "sources.md")
         lines = [f"# 第{episode}期 图片来源", "",
                  "> Pexels：免费商用、无需署名。Wikimedia Commons：CC 授权，发布时请在简介注明来源。", ""]
         for s in sources:

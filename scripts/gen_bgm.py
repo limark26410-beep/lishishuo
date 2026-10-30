@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""程序合成氛围垫乐 v2（增强版）——4 情绪 × 2 首 → ~/Desktop/历史说素材/bgm/{情绪}/
+"""程序合成氛围垫乐 v2（增强版）——4 情绪 × 2 首 → C:/历史说素材/bgm/{情绪}/
 
 v2 增强（GL-20260817-04 A+B）：
 - 悬念：低频 drone + 心跳脉冲 + 稀疏音符
@@ -211,7 +211,7 @@ def shou_02():
     render(tr, total, shou_02_path, fade_in=1.0, fade_out=5.0)
 
 if __name__ == "__main__":
-    root = sys.argv[1] if len(sys.argv) > 1 else "/Users/local/Desktop/历史说素材/bgm"
+    root = sys.argv[1] if len(sys.argv) > 1 else "C:/历史说素材/bgm"
     g = {}
     for emo in ["悬念", "平叙", "高潮", "收束"]:
         g[emo] = os.path.join(root, emo)

@@ -6,14 +6,14 @@
 
 9 屏：主视觉 / 产品展示 / 产品参数 / 大坛窖藏 / 品鉴指南 / 鉴湖本源 /
       四季工艺 / 品饮场景 / 品牌故事
-用法: ./venv/bin/python tools/make_detail_v3.py
+用法: python tools/make_detail_v3.py
 """
 import os
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 W = 750
-F_SONG = "/System/Library/Fonts/Songti.ttc"
-F_PF = "/System/Library/Fonts/PingFang.ttc"
+F_SONG = "C:/Windows/Fonts/simsun.ttc"
+F_PF = "C:/Windows/Fonts/msyh.ttc"
 
 BG = (247, 243, 236)
 DARK = (34, 26, 20)

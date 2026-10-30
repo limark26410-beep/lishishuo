@@ -2,7 +2,7 @@ pipeline:
   name: 历史长音频流水线
   version: 1.0.0
 output:
-  library_root: /Users/local/Desktop/历史说素材/红楼梦/
+  library_root: C:/历史说素材
   dirs:
     video: 成片
     images: 图片
@@ -68,15 +68,14 @@ video:
     transition: fade
     duration: 1.0
   encoder_platform:
-    darwin: h264_videotoolbox
-    linux: libx264
     win32: libx264
   encoder_options:
     libx264:
       crf: 26
       preset: medium
-    h264_videotoolbox:
-      bitrate: 3000k
+    libx264:
+      crf: 26
+      preset: veryfast
   audio_codec: aac
   audio_bitrate: 192k
   mode: image
@@ -84,7 +83,7 @@ video:
     enabled: true
     keep: 0.7
 subtitle:
-  font_path: /Library/Fonts/AdobeHeitiStd-Regular.otf
+  font_path: C:/Fonts/AdobeHeitiStd-Regular.otf
   font_path_linux: /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc
   font_size: 60
   margin_bottom: 400
@@ -92,7 +91,7 @@ subtitle:
   max_chars_per_line: 14
   max_lines: 2
   outline_width: 3
-  font_path_windows: C:/Windows/Fonts/msyh.ttc
+  font_path_windows: C:/Fonts/AdobeHeitiStd-Regular.otf
 title_card:
   duration: 2
   main_font_size: 69
@@ -108,7 +107,7 @@ bgm:
   path: assets/bgm.mp3
   volume: 0.12
   seg_volume: 0.25
-  library_root: /Users/local/Desktop/历史说素材/bgm/
+  library_root: C:/历史说素材/bgm/
 checks:
   max_line_length: true
   text_integrity: true
@@ -119,11 +118,11 @@ cleanup:
   clean_clips: true
   clean_images: false
 video_source:
-  root: /Users/local/Desktop/视频素材/
+  root: C:/历史说素材/视频素材/
 dropbox:
   enabled: false
-  watch_dir: ~/历史说素材/投递/
-  out_dir: ~/历史说素材/成片/
+  watch_dir: C:/历史说素材/投递/
+  out_dir: C:/历史说素材/成片/
   interval_sec: 5
   series: ''
 style:

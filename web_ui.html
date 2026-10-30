@@ -263,7 +263,7 @@
         <div class="row">
           <label>视频素材库</label>
           <div class="flex">
-            <input type="text" id="a_video_root" placeholder="~/历史说素材/视频">
+            <input type="text" id="a_video_root" placeholder="C:/历史说素材/视频">
             <button class="ghost" onclick="pickVideoRoot()">选择目录</button>
           </div>
           <div class="hint">视频混剪专用，与上面「素材库归档根目录」独立配置，改归档不影响视频选材；素材按「题材/主题_编号.mp4」组织。GL-20260902：同目录可混放 .jpg/.png 图片——有图有视频时自动交替混剪（视频截片段 + 图片 Ken Burns 动效）</div>
@@ -379,7 +379,7 @@
     <div class="row">
       <label>素材库归档根目录</label>
       <div class="flex">
-        <input type="text" id="a_root" value="~/Desktop/历史说素材">
+        <input type="text" id="a_root" value="C:/历史说素材">
         <button class="ghost" onclick="pickRoot()">选择目录</button>
       </div>
       <div class="hint">历史素材库归档根目录，成片/图片/录音/稿子/字幕分类存这里；视频混剪用的视频素材库在「图片来源 → 视频素材库」设置</div>
@@ -620,12 +620,12 @@
     <div style="margin-top:8px">
       <label class="hint" style="display:block;margin-bottom:4px">稿子投递目录</label>
       <div class="flex">
-        <input type="text" id="db_watch" style="flex:1" placeholder="~/历史说素材/投递">
+        <input type="text" id="db_watch" style="flex:1" placeholder="C:/历史说素材/投递">
         <button class="ghost" onclick="pickDropboxDir('watch')">选择目录</button>
       </div>
       <label class="hint" style="display:block;margin:10px 0 4px">成片输出目录</label>
       <div class="flex">
-        <input type="text" id="db_out" style="flex:1" placeholder="~/历史说素材/成片">
+        <input type="text" id="db_out" style="flex:1" placeholder="C:/历史说素材/成片">
         <button class="ghost" onclick="pickDropboxDir('out')">选择目录</button>
       </div>
     </div>

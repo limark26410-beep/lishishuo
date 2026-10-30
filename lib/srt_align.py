@@ -16,15 +16,18 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
-# talkcraft 环境（含可用 sherpa-onnx）
-TALK_VENV_PY = "/Users/local/.dsh/skills/video-talkcraft/.venv311/bin/python"
-TALK_TS_SCRIPT = "/Users/local/.dsh/skills/video-talkcraft/scripts/timestamps_cpu.py"
+# ASR 环境（Windows：直接用当前 Python + 本仓库脚本，需已装 sherpa-onnx）
+TALK_VENV_PY = sys.executable
+TALK_TS_SCRIPT = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "scripts", "timestamps_cpu.py")
 ASR_MODEL_DIR = str(Path.home() / ".cache/koubo/sherpa-onnx-fire-red-asr2-ctc-zh_en-int8-2026-02-25")
 
 # 音频重采样临时目录
-TMP = "/tmp/srt_align"
+TMP = os.path.join(tempfile.gettempdir(), "srt_align")
 
 
 def _ts_str(sec: float) -> str:

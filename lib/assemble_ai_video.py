@@ -39,7 +39,8 @@ print(f"✓ {len(segs)} 段已统一规格 (25fps 1920x1080)")
 concat_list = os.path.join(EP, "_concat.txt")
 
 # ── 2. 标题叠加：直接叠在第 1 段开头(0-3.6s 淡入淡出)，无独立片头 ──
-font = "/System/Library/Fonts/PingFang.ttc"
+font = "C:/Fonts/AdobeKaitiStd-Regular.otf"
+font_arg = "'" + font.replace(":", "\\:") + "'"
 def _esc(t: str) -> str:
     return t.replace("\\", "\\\\").replace("'", "\\'").replace(":", "\\:")
 
@@ -52,11 +53,11 @@ sub_y = main_y + main_fs + 30
 run(["ffmpeg", "-y", "-i", norm[0],
      "-vf",
      (f"drawbox=x=0:y={int(H*0.24)}:w={W}:h={int(H*0.32)}:color=black@0.28:t=fill:enable='lt(t,3.6)',"
-      f"drawtext=fontfile={font}:text='{_esc(main_text)}':fontsize={main_fs}:fontcolor=0xD4AF37:"
+      f"drawtext=fontfile={font_arg}:text='{_esc(main_text)}':fontsize={main_fs}:fontcolor=0xD4AF37:"
       f"borderw=6:bordercolor=black@0.5:"
       f"x=(w-text_w)/2:y={main_y}:"
       f"alpha='if(lt(t,0.6),t/0.6,if(lt(t,3.0),1,(3.6-t)/0.6))',"
-      f"drawtext=fontfile={font}:text='{_esc(series_text)}':fontsize={sub_fs}:fontcolor=white:"
+      f"drawtext=fontfile={font_arg}:text='{_esc(series_text)}':fontsize={sub_fs}:fontcolor=white:"
       f"borderw=4:bordercolor=black@0.5:"
       f"x=(w-text_w)/2:y={sub_y}:"
       f"alpha='if(lt(t,0.6),t/0.6,if(lt(t,3.0),1,(3.6-t)/0.6))'"),

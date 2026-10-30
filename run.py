@@ -15,7 +15,7 @@
   8. 清理临时文件
 
 编码策略（config.yaml 控制）：
-  encoder: libx264 | auto | h264_videotoolbox
+  encoder: libx264（固定软编码，不用硬件编码器）
   transition: concat（生产默认，秒出）| xfade（重编码，可选）
   preset: veryfast（生产默认）
 """
@@ -115,7 +115,7 @@ def _build_bgm_map(bgm_cfg: dict) -> dict:
     规范：{library_root}/{悬念|平叙|高潮|收束}/*.mp3；每情绪取第一个文件
     （素材库有备选后可按期轮换）。库不存在/为空 → 返回空 dict（混音走单 BGM 兜底）。
     """
-    root = os.path.expanduser(bgm_cfg.get("library_root", "~/历史说素材/bgm/"))
+    root = os.path.expanduser(bgm_cfg.get("library_root", "C:/历史说素材/bgm/"))
     if not os.path.isdir(root):
         return {}
     from emotion_tag import EMOTIONS
@@ -453,22 +453,25 @@ def step_mix(episode_dir: str, tts_result: dict, img_result: dict, cfg: dict, ca
 
     # ── 3a.5 图片智能匹配（升级：段落关键词 ↔ 图名标签重排）──
     # 回滚：删除本段（3a.5 到 END 3a.5）即恢复平均轮播；原顺序在 image_paths 被重排前已保留
-    try:
-        from img_matcher import match_images_to_segments
-        _mp = Path(os.path.join(episode_dir, "script.txt"))
-        if _mp.exists():
-            from script_seg import split_segments
-            with open(_mp, encoding="utf-8") as _f:
-                _body = _f.read()
-            _segs = split_segments(_body)
-            if _segs:
-                image_paths, _diag = match_images_to_segments(_segs, image_paths)
-                print(f"  🔀 图片智能匹配: 命中段落 {_diag.get('segments_with_hits', 0)} 个, "
-                      f"匹配图 {_diag.get('matched_images', 0)}/{_diag.get('total_images', 0)} 张")
-                if _diag.get("assigned_by_seg"):
-                    print(f"     每段分配: {_diag['assigned_by_seg']}")
-    except Exception as _e:  # noqa: BLE001
-        print(f"  ⚠ 图片智能匹配失败（{type(_e).__name__}: {_e}），回退平均轮播")
+    if not os.environ.get("LISHISHUO_NO_IMG_MATCH"):
+        try:
+            from img_matcher import match_images_to_segments
+            _mp = Path(os.path.join(episode_dir, "script.txt"))
+            if _mp.exists():
+                from script_seg import split_segments
+                with open(_mp, encoding="utf-8") as _f:
+                    _body = _f.read()
+                _segs = split_segments(_body)
+                if _segs:
+                    image_paths, _diag = match_images_to_segments(_segs, image_paths)
+                    print(f"  🔀 图片智能匹配: 命中段落 {_diag.get('segments_with_hits', 0)} 个, "
+                          f"匹配图 {_diag.get('matched_images', 0)}/{_diag.get('total_images', 0)} 张")
+                    if _diag.get("assigned_by_seg"):
+                        print(f"     每段分配: {_diag['assigned_by_seg']}")
+        except Exception as _e:  # noqa: BLE001
+            print(f"  ⚠ 图片智能匹配失败（{type(_e).__name__}: {_e}），回退平均轮播")
+    else:
+        print("  ▶ 已关闭图片智能匹配，严格按文件名顺序")
     # ── END 3a.5 ──
 
     # ── 3b. 时间分配 ──
@@ -714,7 +717,7 @@ def _video_step_mix(episode_dir: str, tts_result: dict, cfg: dict, canvas=None, 
 
     # ── 3v2. 素材清单 + 池时长校验 ──
     from material_scanner import scan_material
-    lib_root = os.path.expanduser(vs_cfg.get("root", "~/历史说素材/视频/"))
+    lib_root = os.path.expanduser(vs_cfg.get("root", "C:/历史说素材/视频/"))
     materials = scan_material(lib_root)
     if not materials:
         raise RuntimeError(
@@ -1187,10 +1190,23 @@ def _load_env_if_exists():
         pass
 
 
+def _ensure_ffmpeg_path():
+    """确保 ffmpeg 可被 subprocess 找到（新机器 PATH 尚未刷新时兜底）。"""
+    import shutil
+    if shutil.which("ffmpeg"):
+        return
+    for d in (r"C:\ffmpeg\bin", r"C:\MV_WT\tools\ffmpeg"):
+        if os.path.exists(os.path.join(d, "ffmpeg.exe")):
+            os.environ["PATH"] = d + os.pathsep + os.environ.get("PATH", "")
+            print(f"  ▶ ffmpeg: {d}（已自动加入 PATH）")
+            return
+
+
 def main():
     import argparse
     from concurrent.futures import ThreadPoolExecutor
 
+    _ensure_ffmpeg_path()
     _load_env_if_exists()
 
     parser = argparse.ArgumentParser(description="文史长音频自动化流水线")
@@ -1204,6 +1220,8 @@ def main():
     parser.add_argument("--skip-images", action="store_true", help="跳过生图")
     parser.add_argument("--shuffle-images", action="store_true",
                         help="本地图片按本期随机打乱顺序（每期画面不同）")
+    parser.add_argument("--no-image-match", action="store_true",
+                        help="关闭图片智能匹配，严格按文件名顺序出片")
     parser.add_argument("--no-cleanup", action="store_true", help="不清理临时文件")
     parser.add_argument("--dry-run", action="store_true", help="仅检查素材")
     # ── 新增 ──
@@ -1238,6 +1256,8 @@ def main():
     parser.add_argument("--only", choices=["subtitle", "title", "encode"],
                         help="只重跑某一步（需已有中间产物）")
     args = parser.parse_args()
+    if getattr(args, "no_image_match", False):
+        os.environ["LISHISHUO_NO_IMG_MATCH"] = "1"
 
     config_path = args.config
     if not os.path.exists(config_path):
@@ -1283,7 +1303,7 @@ def main():
         count = getattr(args, "fetch_count", None) or 3
         clip_sec = getattr(args, "fetch_clip_seconds", None) or 90
         lib_root = os.path.expanduser(
-            cfg.get("video_source", {}).get("root", "~/Desktop/历史说素材/视频/"))
+            cfg.get("video_source", {}).get("root", "C:/历史说素材/视频/"))
         print(f"  ▶ 抓取素材：「{fetch_kw}」{count} 个片段 [{getattr(args, 'fetch_source', 'youtube')}]"
               f" → {lib_root}/{topic}")
         fetch_by_keyword(fetch_kw, topic, count, clip_sec, root=lib_root,
@@ -1305,7 +1325,7 @@ def main():
         from lib.fetch_materials import download
         topic = getattr(args, "fetch_topic", None) or "素材"
         lib_root = os.path.expanduser(
-            cfg.get("video_source", {}).get("root", "~/Desktop/历史说素材/视频/"))
+            cfg.get("video_source", {}).get("root", "C:/历史说素材/视频/"))
         print(f"  ▶ 链接下载: {fetch_url[:60]}… → {lib_root}/{topic}")
         download(fetch_url, topic, None, None, f"链接素材 {fetch_url[:40]}", lib_root)
         cfg.setdefault("video", {})["mode"] = "clip"
